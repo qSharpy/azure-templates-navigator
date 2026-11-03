@@ -77,8 +77,16 @@ func Outline(lines []string) []*Symbol {
 		}
 	}
 
+	mask := BlockScalarMask(lines)
 	for i := 0; i < len(lines); i++ {
 		raw := lines[i]
+		if mask[i] {
+			// script body: part of the enclosing step, never a new symbol
+			for _, fr := range stack {
+				fr.sym.EndLine = i
+			}
+			continue
+		}
 		if IsBlank(raw) || IsComment(raw) {
 			continue
 		}

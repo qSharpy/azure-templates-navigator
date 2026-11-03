@@ -173,7 +173,7 @@ func (e *Engine) Resolve(path string, line int) (Resolution, bool) {
 	if f == nil || line < 0 || line >= len(f.lines) {
 		return Resolution{}, false
 	}
-	r, ok := pipeline.TemplateRefOnLine(f.lines[line], line)
+	r, ok := f.refAt(line)
 	if !ok {
 		return Resolution{}, false
 	}

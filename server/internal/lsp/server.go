@@ -28,11 +28,39 @@ type Server struct {
 	reqID    int
 	shutdown bool
 	watchReg bool
+
+	// pubMu serialises publish runs so an older run can never overwrite the
+	// diagnostics of a newer one.
+	pubMu      sync.Mutex
+	pubVersion int // index version last announced with atn/didChange
+
+	// Requests run on workers so the reader keeps taking document changes
+	// and $/cancelRequest while a slow request is in flight.
+	queue     chan *message
+	pendingMu sync.Mutex
+	pending   map[string]bool // request id -> cancelled
 }
+
+// workers is the number of goroutines serving requests. The engine
+// serialises its own work; more than one worker lets cheap requests (hover)
+// finish while an expensive one (graph) waits for its turn.
+const workers = 4
+
+// codeRequestCancelled is LSP's RequestCancelled error code.
+const codeRequestCancelled = -32800
 
 // Serve runs the server until the client exits.
 func Serve(in io.Reader, out io.Writer) error {
-	s := &Server{c: &conn{r: bufio.NewReaderSize(in, 1<<16), w: out}, pubHash: map[string]string{}}
+	s := &Server{
+		c:       &conn{r: bufio.NewReaderSize(in, 1<<16), w: out},
+		pubHash: map[string]string{},
+		queue:   make(chan *message, 256),
+		pending: map[string]bool{},
+	}
+	for i := 0; i < workers; i++ {
+		go s.worker()
+	}
+	defer close(s.queue)
 	for {
 		m, err := s.c.read()
 		if err != nil {
@@ -41,8 +69,64 @@ func Serve(in io.Reader, out io.Writer) error {
 			}
 			return err
 		}
-		s.handle(m)
+		s.dispatch(m)
 	}
+}
+
+// dispatch handles notifications (document sync, cancellation) and
+// lifecycle requests in order on the reader goroutine, and queues every
+// other request for a worker.
+func (s *Server) dispatch(m *message) {
+	if m.ID == nil || m.Method == "" || s.eng == nil {
+		if m.Method == "$/cancelRequest" {
+			s.cancel(m.Params)
+			return
+		}
+		s.handle(m)
+		return
+	}
+	switch m.Method {
+	case "initialize", "shutdown", "exit":
+		s.handle(m)
+		return
+	}
+	s.pendingMu.Lock()
+	s.pending[string(*m.ID)] = false
+	s.pendingMu.Unlock()
+	s.queue <- m
+}
+
+func (s *Server) worker() {
+	for m := range s.queue {
+		key := string(*m.ID)
+		s.pendingMu.Lock()
+		cancelled := s.pending[key]
+		s.pendingMu.Unlock()
+		if cancelled {
+			_ = s.c.reply(m.ID, nil, &rpcError{Code: codeRequestCancelled, Message: "request cancelled"})
+		} else {
+			s.handle(m)
+		}
+		s.pendingMu.Lock()
+		delete(s.pending, key)
+		s.pendingMu.Unlock()
+	}
+}
+
+// cancel marks a queued request as cancelled. A request that already
+// started runs to completion (engine calls are short and not interruptible).
+func (s *Server) cancel(raw json.RawMessage) {
+	var p struct {
+		ID json.RawMessage `json:"id"`
+	}
+	if json.Unmarshal(raw, &p) != nil || len(p.ID) == 0 {
+		return
+	}
+	s.pendingMu.Lock()
+	if _, ok := s.pending[string(p.ID)]; ok {
+		s.pending[string(p.ID)] = true
+	}
+	s.pendingMu.Unlock()
 }
 
 func (s *Server) logf(format string, args ...interface{}) {
@@ -88,7 +172,7 @@ func (s *Server) handle(m *message) {
 			os.Exit(0)
 		}
 		os.Exit(1)
-	case "$/cancelRequest", "$/setTrace", "textDocument/didSave", "workspace/didChangeWorkspaceFolders":
+	case "$/setTrace", "textDocument/didSave", "workspace/didChangeWorkspaceFolders":
 		if m.Method == "workspace/didChangeWorkspaceFolders" {
 			s.workspaceFoldersChanged(m.Params)
 		}
@@ -408,16 +492,24 @@ func (s *Server) rangeOf(path string, l1, c1, l2, c2 int) lspRange {
 	}
 }
 
+// publish sends the diagnostics that changed since the last run, and
+// atn/didChange when the index or any diagnostics changed (clients reload
+// their trees and the graph on it, so it must not fire on every keystroke).
 func (s *Server) publish() {
-	all := s.eng.DiagnoseAll()
-	s.mu.Lock()
-	// files that disappeared: clear
-	for p := range s.pubHash {
-		if _, ok := all[p]; !ok {
-			all[p] = nil
+	s.pubMu.Lock()
+	defer s.pubMu.Unlock()
+	delta := s.eng.ChangedDiagnostics()
+	all := delta.Files
+	if delta.Full {
+		// files that disappeared: clear
+		s.mu.Lock()
+		for p := range s.pubHash {
+			if _, ok := all[p]; !ok {
+				all[p] = nil
+			}
 		}
+		s.mu.Unlock()
 	}
-	s.mu.Unlock()
 
 	paths := make([]string, 0, len(all))
 	for p := range all {
@@ -435,25 +527,23 @@ func (s *Server) publish() {
 		h := fmt.Sprintf("%x", sha1.Sum(b))
 		s.mu.Lock()
 		prev, seen := s.pubHash[p]
-		if seen && prev == h {
+		if (seen && prev == h) || (!seen && len(lds) == 0) {
 			s.mu.Unlock()
 			continue
 		}
-		if !seen && len(lds) == 0 {
+		if len(lds) == 0 {
+			delete(s.pubHash, p) // nothing shown any more
+		} else {
 			s.pubHash[p] = h
-			s.mu.Unlock()
-			continue
-		}
-		s.pubHash[p] = h
-		if all[p] == nil {
-			delete(s.pubHash, p)
 		}
 		s.mu.Unlock()
 		changed = true
 		_ = s.c.notify("textDocument/publishDiagnostics", map[string]interface{}{"uri": pathToURI(p), "diagnostics": lds})
 	}
-	_ = changed
-	_ = s.c.notify("atn/didChange", map[string]interface{}{"reason": "index"})
+	if changed || delta.Version != s.pubVersion {
+		s.pubVersion = delta.Version
+		_ = s.c.notify("atn/didChange", map[string]interface{}{"reason": "index"})
+	}
 }
 
 func (s *Server) workspaceDiagnostics() interface{} {

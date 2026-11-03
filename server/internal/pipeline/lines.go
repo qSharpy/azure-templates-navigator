@@ -102,3 +102,37 @@ func IsPipelineRoot(lines []string) bool {
 	}
 	return false
 }
+
+// azureTopLevelKeys are root keys only Azure Pipelines files (pipelines or
+// templates) have in combination with the rest of this heuristic.
+var azureTopLevelKeys = []string{
+	"steps", "jobs", "stages", "parameters", "variables", "extends", "trigger", "pr",
+	"resources", "pool", "schedules", "lockBehavior", "appendCommitMessageToRunName",
+}
+
+// LooksLikeAzurePipelines reports whether a YAML document is plausibly an
+// Azure Pipelines pipeline or template. It keeps Kubernetes manifests,
+// GitHub Actions workflows, docker-compose files, Helm values and similar
+// YAML out of the index (no diagnostics, graph nodes or completions).
+func LooksLikeAzurePipelines(lines []string) bool {
+	keys := TopLevelKeys(lines)
+	has := func(k string) bool { _, ok := keys[k]; return ok }
+	if has("apiVersion") && has("kind") {
+		return false // Kubernetes / OpenShift
+	}
+	if has("on") && has("jobs") {
+		return false // GitHub Actions workflow
+	}
+	for _, k := range azureTopLevelKeys {
+		if has(k) {
+			return true
+		}
+	}
+	// templates whose root is a conditional: `${{ if ... }}:`
+	for _, l := range lines {
+		if strings.HasPrefix(l, "${{") {
+			return true
+		}
+	}
+	return false
+}

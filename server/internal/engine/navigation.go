@@ -74,14 +74,10 @@ func (e *Engine) paramAt(f *fileInfo, line, col int) (template string, name stri
 			return f.path, p.Name, true
 		}
 	}
-	if ctx, ok := pipeline.FindCallSite(f.lines, line); ok && ctx.InParameters {
-		cs := pipeline.ParseCallSite(f.lines, ctx.TemplateLine)
-		for _, n := range cs.Order {
-			if pp := cs.Passed[n]; pp.Line == line {
-				tr, _ := pipeline.TemplateRefOnLine(f.lines[ctx.TemplateLine], ctx.TemplateLine)
-				if res := e.resolve(tr, f); res.Exists {
-					return res.Path, n, true
-				}
+	if tl, pp, ok := pipeline.PassedParamAt(f.lines, line, col); ok {
+		if tr, ok := f.refAt(tl); ok {
+			if res := e.resolve(tr, f); res.Exists {
+				return res.Path, pp.Name, true
 			}
 		}
 	}
@@ -107,7 +103,7 @@ func (e *Engine) References(path string, line, col int, includeDecl bool) UsageR
 		out = e.paramUsages(tpl, name, includeDecl)
 	} else {
 		target := path
-		if r, ok := pipeline.TemplateRefOnLine(f.lines[line], line); ok {
+		if r, ok := f.refAt(line); ok {
 			res := e.resolve(r, f)
 			if !res.Exists {
 				return UsageResult{}
@@ -224,7 +220,7 @@ func (e *Engine) PrepareHierarchy(path string, line int) (HierarchyItem, bool) {
 		return HierarchyItem{}, false
 	}
 	if line >= 0 && line < len(f.lines) {
-		if r, ok := pipeline.TemplateRefOnLine(f.lines[line], line); ok {
+		if r, ok := f.refAt(line); ok {
 			if res := e.resolve(r, f); res.Exists {
 				return e.hierarchyItem(res.Path), true
 			}

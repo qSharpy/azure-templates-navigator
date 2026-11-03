@@ -3,6 +3,31 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [2.1.0] — 2026-11-03
+
+### Fixed
+
+- **`template:` text inside a script is no longer treated as a template call.** Lines in a block scalar (`script: |`, `bash: >-`, `- |`, ...) are shell, not YAML structure.
+  - Before, a script that printed `template: x.yml` got a "template not found" error, and its line showed up in usages, the call hierarchy and the graph.
+  - The outline and variables lookup skip script bodies too.
+- **Parameters passed as a flow mapping are recognised:** `parameters: { env: prod, count: 3 }`, on one line or over several.
+  - Before, every required parameter was reported missing, and typos and wrong values were never flagged.
+  - Quick fixes edit inside the braces: add missing parameters, remove or rename an unknown one, change a value.
+  - Hover, go-to-definition and find usages work on the keys.
+- **`parameters: ${{ parameters }}`** (forwarding everything to another template) no longer reports every required parameter as missing.
+- **Type-mismatch and value-not-allowed ranges** stop at the value. Their quick fixes no longer delete a trailing comment.
+
+### Performance
+
+- **Edits re-check only what they affect.**
+  - Changing a file re-links that file. It re-checks the file, its callers, and any file whose reference it makes appear or disappear.
+  - Before, every keystroke rebuilt the call graph and re-checked the whole workspace. On a 2,200-file workspace that took about 33 ms per keystroke, against about 0.4 ms now.
+  - A change to `resources.repositories` still rebuilds everything, because aliases resolve references in other files.
+- **Only changed diagnostics are republished.**
+- **The tree views and the graph reload only when something changed.** Both IDEs refresh them on the server's `atn/didChange` notification, which was sent after every keystroke.
+- **Requests no longer queue behind each other.** The server reads document changes and `$/cancelRequest` while a request is running. Requests run on worker goroutines, and a request cancelled before it starts is answered with `RequestCancelled`.
+- **YAML that isn't Azure Pipelines is left out of the index:** Kubernetes manifests, GitHub Actions workflows, docker-compose files, Helm values and the like. They get no diagnostics, graph nodes or template-path completions.
+
 ## [2.0.0] — 2026-11-03
 
 ### Architecture

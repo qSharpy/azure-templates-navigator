@@ -660,7 +660,7 @@ func (e *Engine) TemplateParameters(path string, line int) (string, []ParamInfo)
 	e.ensureLinked()
 	target := path
 	if f := e.file(path); f != nil && line >= 0 && line < len(f.lines) {
-		if r, ok := pipeline.TemplateRefOnLine(f.lines[line], line); ok {
+		if r, ok := f.refAt(line); ok {
 			res := e.resolve(r, f)
 			if !res.Exists {
 				return "", nil

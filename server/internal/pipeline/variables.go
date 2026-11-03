@@ -44,7 +44,11 @@ func ParseVariables(lines []string) Variables {
 			vs.Order = append(vs.Order, v.Name)
 		}
 	}
+	mask := BlockScalarMask(lines)
 	for i := 0; i < len(lines); i++ {
+		if mask[i] {
+			continue
+		}
 		m := variablesKeyRe.FindStringSubmatch(StripComment(lines[i]))
 		if m == nil {
 			continue

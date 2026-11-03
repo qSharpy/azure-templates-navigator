@@ -164,9 +164,21 @@ scripts/build.sh all
 
 ## Releasing
 
-1. Bump `VERSION`. `build.sh` copies it into `package.json` and `gradle.properties`.
-2. Run `scripts/build.sh vscode-targets`, which cross-compiles the server first. Then run `npx vsce publish --packagePath dist/*-$(cat VERSION).vsix`.
-3. Run `scripts/build.sh intellij`, then upload `dist/azure-templates-intellij-<v>.zip` to JetBrains Marketplace.
-4. Attach `dist/release/atn-*` to a GitHub release for CLI and CI users.
+Releases are published only by `.github/workflows/release.yml`, which runs when a `vX.Y.Z` tag is pushed. Nothing is published by hand.
+
+1. Set `VERSION` to the new version. `build.sh` copies it into `package.json` and `gradle.properties`.
+2. In `CHANGELOG.md`, give the release its heading, `## [X.Y.Z] — YYYY-MM-DD`. The workflow refuses a tag whose section is missing or still says `unreleased`, and uses the section as the GitHub release notes.
+3. Commit, then `git tag vX.Y.Z && git push origin main vX.Y.Z`.
+
+The workflow runs `scripts/build.sh test`, builds the six platform VSIXs and the IntelliJ zip, and publishes them to:
+
+- the VS Code Marketplace
+- Open VSX, only if the `OVSX_PAT` secret is set
+- a GitHub release, with the VSIXs, the plugin zip and the `atn-*` CLI binaries
+- the JetBrains Marketplace, which reviews each upload by hand, so it appears a day or two later
+
+If a step fails, fix the problem and re-run the job. Every step before JetBrains skips work that is already done. The secrets it needs are listed at the top of the workflow file.
+
+`scripts/build.sh vscode-targets` and `scripts/build.sh intellij` build the same packages locally, into `dist/`, if you want to try them before tagging.
 
 Platforms: darwin-arm64, darwin-x64, linux-x64, linux-arm64, win32-x64, win32-arm64.

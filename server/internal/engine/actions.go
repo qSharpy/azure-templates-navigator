@@ -58,12 +58,16 @@ func (e *Engine) CodeActions(path string, startLine, endLine int) []CodeAction {
 			}
 			cs := pipeline.ParseCallSite(f.lines, d.templateLine)
 			pp := cs.Passed[d.param]
-			end := pp.Line
-			if pp.IsBlock {
-				end = pipeline.BlockEnd(f.lines, pp.Line)
+			del := TextEdit{StartLine: pp.DelStart.Line, StartCol: pp.DelStart.Col, EndLine: pp.DelEnd.Line, EndCol: pp.DelEnd.Col}
+			if !pp.Flow {
+				end := pp.Line
+				if pp.IsBlock {
+					end = pipeline.BlockEnd(f.lines, pp.Line)
+				}
+				del = deleteLines(f.lines, pp.Line, end)
 			}
 			out = append(out, CodeAction{Title: fmt.Sprintf("Remove unknown parameter '%s'", d.param), Diagnostic: dp,
-				Edits: []TextEdit{deleteLines(f.lines, pp.Line, end)}, Preferred: len(d.suggestions) == 0})
+				Edits: []TextEdit{del}, Preferred: len(d.suggestions) == 0})
 		case CodeTypeMismatch:
 			lit := pipeline.CanonicalLiteral(d.paramType)
 			out = append(out, CodeAction{Title: fmt.Sprintf("Replace value with %s literal (%s)", d.paramType, lit), Diagnostic: dp, Preferred: true,
@@ -120,6 +124,9 @@ func yamlScalar(v string) string {
 func addParamsEdit(lines []string, templateLine int, missing []Diagnostic) []TextEdit {
 	tr, _ := pipeline.TemplateRefOnLine(lines[templateLine], templateLine)
 	cs := pipeline.ParseCallSite(lines, templateLine)
+	if cs.Flow != nil {
+		return addFlowParamsEdit(cs, missing)
+	}
 	var entries []string
 	if cs.ParamsLine < 0 {
 		keyIndent := strings.Repeat(" ", tr.KeyCol)
@@ -139,11 +146,28 @@ func addParamsEdit(lines []string, templateLine int, missing []Diagnostic) []Tex
 	for _, d := range missing {
 		entries = append(entries, entryIndent+d.param+": "+pipeline.CanonicalLiteral(d.paramType))
 	}
-	// `parameters: {}` / `parameters: []` inline forms are rare; we only
-	// handle the block form here.
 	last := cs.LastLine
 	eol := len(lines[last])
 	return []TextEdit{{StartLine: last, StartCol: eol, EndLine: last, EndCol: eol, NewText: "\n" + strings.Join(entries, "\n")}}
+}
+
+// addFlowParamsEdit adds entries to `parameters: { ... }`: after the last
+// entry, or inside empty braces. An unterminated mapping gets no edit.
+func addFlowParamsEdit(cs pipeline.CallSite, missing []Diagnostic) []TextEdit {
+	fm := cs.Flow
+	if !fm.Closed {
+		return nil
+	}
+	var entries []string
+	for _, d := range missing {
+		entries = append(entries, d.param+": "+pipeline.CanonicalLiteral(d.paramType))
+	}
+	text := strings.Join(entries, ", ")
+	if n := len(fm.Entries); n > 0 {
+		end := fm.Entries[n-1].End
+		return []TextEdit{{StartLine: end.Line, StartCol: end.Col, EndLine: end.Line, EndCol: end.Col, NewText: ", " + text}}
+	}
+	return []TextEdit{{StartLine: fm.Open.Line, StartCol: fm.Open.Col + 1, EndLine: fm.Close.Line, EndCol: fm.Close.Col, NewText: " " + text + " "}}
 }
 
 // declareParamEdit appends a declaration for name to the file's parameters

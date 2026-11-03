@@ -89,25 +89,17 @@ func (e *Engine) HoverAt(path string, line, col int, cf ClientFeatures) (Hover, 
 		md := fmt.Sprintf("**⚠️ Undeclared parameter** `%s`\n\nNot declared in this file's `parameters:` block, so it evaluates to an empty string.", pr.Name)
 		return Hover{Markdown: md, Line: line, StartCol: pr.Start, EndCol: pr.End}, true
 	}
-	if r, ok := pipeline.TemplateRefOnLine(text, line); ok {
+	if r, ok := f.refAt(line); ok {
 		res := e.resolve(r, f)
 		return Hover{Markdown: e.templateHover(f, r, res, cf), Line: line, StartCol: r.KeyCol, EndCol: r.ValueEnd}, true
 	}
 	// Hover over a parameter key passed at a call site
-	if ctx, ok := pipeline.FindCallSite(f.lines, line); ok && ctx.InParameters {
-		clean := pipeline.StripComment(text)
-		trimmed := strings.TrimLeft(clean, " \t")
-		start := len(clean) - len(trimmed)
-		if i := strings.Index(trimmed, ":"); i > 0 && col >= start && col <= start+i {
-			name := trimmed[:i]
-			tr, _ := pipeline.TemplateRefOnLine(f.lines[ctx.TemplateLine], ctx.TemplateLine)
-			res := e.resolve(tr, f)
-			if res.Exists {
-				if tf := e.file(res.Path); tf != nil {
-					if p, ok := pipeline.ParamByName(tf.params, name); ok {
-						md := paramDoc(p, e.settings.RequiredParameterColor) + fmt.Sprintf("\n\n_From template_ `%s`", tr.Ref)
-						return Hover{Markdown: md, Line: line, StartCol: start, EndCol: start + i}, true
-					}
+	if tr, pp, ok := e.passedParamKeyAt(f, line, col); ok {
+		if res := e.resolve(tr, f); res.Exists {
+			if tf := e.file(res.Path); tf != nil {
+				if p, ok := pipeline.ParamByName(tf.params, pp.Name); ok {
+					md := paramDoc(p, e.settings.RequiredParameterColor) + fmt.Sprintf("\n\n_From template_ `%s`", tr.Ref)
+					return Hover{Markdown: md, Line: line, StartCol: pp.NameCol, EndCol: pp.NameCol + len(pp.Name)}, true
 				}
 			}
 		}
@@ -304,7 +296,7 @@ func (e *Engine) Definition(path string, line, col int) (Location, bool) {
 		return Location{}, false
 	}
 	text := f.lines[line]
-	if r, ok := pipeline.TemplateRefOnLine(text, line); ok {
+	if r, ok := f.refAt(line); ok {
 		res := e.resolve(r, f)
 		if res.Exists {
 			return Location{Path: res.Path}, true
@@ -321,23 +313,27 @@ func (e *Engine) Definition(path string, line, col int) (Location, bool) {
 			return Location{Path: f.path, Line: vv.Line, Col: pipeline.Indent(f.lines[vv.Line])}, true
 		}
 	}
-	if ctx, ok := pipeline.FindCallSite(f.lines, line); ok && ctx.InParameters {
-		clean := pipeline.StripComment(text)
-		trimmed := strings.TrimLeft(clean, " \t")
-		start := len(clean) - len(trimmed)
-		if i := strings.Index(trimmed, ":"); i > 0 && col >= start && col <= start+i {
-			tr, _ := pipeline.TemplateRefOnLine(f.lines[ctx.TemplateLine], ctx.TemplateLine)
-			res := e.resolve(tr, f)
-			if res.Exists {
-				if tf := e.file(res.Path); tf != nil {
-					if p, ok := pipeline.ParamByName(tf.params, trimmed[:i]); ok {
-						return Location{Path: res.Path, Line: p.Line, Col: p.NameCol}, true
-					}
+	if tr, pp, ok := e.passedParamKeyAt(f, line, col); ok {
+		if res := e.resolve(tr, f); res.Exists {
+			if tf := e.file(res.Path); tf != nil {
+				if p, ok := pipeline.ParamByName(tf.params, pp.Name); ok {
+					return Location{Path: res.Path, Line: p.Line, Col: p.NameCol}, true
 				}
 			}
 		}
 	}
 	return Location{}, false
+}
+
+// passedParamKeyAt returns the call-site parameter whose name is under the
+// cursor, with the template call it belongs to.
+func (e *Engine) passedParamKeyAt(f *fileInfo, line, col int) (pipeline.TemplateRef, pipeline.PassedParam, bool) {
+	tl, pp, ok := pipeline.PassedParamAt(f.lines, line, col)
+	if !ok || pp.Line != line || col < pp.NameCol || col > pp.NameCol+len(pp.Name) {
+		return pipeline.TemplateRef{}, pipeline.PassedParam{}, false
+	}
+	tr, ok := f.refAt(tl)
+	return tr, pp, ok
 }
 
 // CompletionItem is an IDE-independent completion proposal.
@@ -377,7 +373,10 @@ func (e *Engine) Complete(path string, line, col int) []CompletionItem {
 	if !ok || !ctx.InParameters {
 		return nil
 	}
-	tr, _ := pipeline.TemplateRefOnLine(f.lines[ctx.TemplateLine], ctx.TemplateLine)
+	tr, ok := f.refAt(ctx.TemplateLine)
+	if !ok {
+		return nil
+	}
 	res := e.resolve(tr, f)
 	if !res.Exists {
 		return nil

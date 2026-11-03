@@ -2,7 +2,7 @@
   "name": "azure-templates-navigator",
   "displayName": "Azure Templates Navigator",
   "description": "Hover, validate, autocomplete and navigate Azure Pipelines YAML templates — including templates from other repositories, which are downloaded automatically.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "publisher": "bogdanbujor",
   "license": "MIT",
   "icon": "logo.png",

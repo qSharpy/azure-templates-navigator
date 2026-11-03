@@ -75,6 +75,45 @@ func (e *Engine) DiagnoseAll() map[string][]Diagnostic {
 	return out
 }
 
+// DiagnosticsDelta is what changed since the previous ChangedDiagnostics call.
+type DiagnosticsDelta struct {
+	// Files maps each file whose diagnostics may have changed to its current
+	// diagnostics; nil means the file left the index (clear what was shown).
+	Files map[string][]Diagnostic
+	// Full: every indexed file is in Files, and files absent from it are no
+	// longer indexed.
+	Full bool
+	// Version is the index version (see Engine.version); it changes when the
+	// call graph or declarations change.
+	Version int
+}
+
+// ChangedDiagnostics returns the diagnostics that may have changed since the
+// previous call, so the language server only republishes those.
+func (e *Engine) ChangedDiagnostics() DiagnosticsDelta {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.ensureLinked()
+	d := DiagnosticsDelta{Files: map[string][]Diagnostic{}, Full: e.diagAll}
+	if e.diagAll {
+		for _, p := range e.workspaceFiles() {
+			d.Files[p] = e.diagnose(p)
+		}
+	} else {
+		for p := range e.diagDirty {
+			if e.linkable(p) != nil {
+				d.Files[p] = e.diagnose(p)
+			} else {
+				d.Files[p] = nil
+			}
+		}
+	}
+	e.diagAll = false
+	e.diagDirty = map[string]bool{}
+	d.Version = e.version
+	return d
+}
+
 func (e *Engine) diagnose(path string) []Diagnostic {
 	if !e.settings.Diagnostics.Enabled {
 		return nil
@@ -91,7 +130,7 @@ func (e *Engine) diagnose(path string) []Diagnostic {
 
 func (e *Engine) computeDiagnostics(path string) []Diagnostic {
 	f := e.file(path)
-	if f == nil {
+	if f == nil || !f.relevant {
 		return nil
 	}
 	var out []Diagnostic
@@ -156,7 +195,7 @@ func (e *Engine) checkCallSite(f *fileInfo, r pipeline.TemplateRef) []Diagnostic
 		return nil
 	}
 	cs := pipeline.ParseCallSite(f.lines, r.Line)
-	if cs.EachPassthrough {
+	if cs.Unknowable() {
 		return nil
 	}
 	var out []Diagnostic
@@ -192,10 +231,9 @@ func (e *Engine) checkCallSite(f *fileInfo, r pipeline.TemplateRef) []Diagnostic
 		if pp.IsBlock || pp.Value == "" || pipeline.IsExpression(pp.Value) {
 			continue
 		}
-		lineLen := len(strings.TrimRight(f.lines[pp.Line], " \t"))
 		if decl.Type != "" {
 			if inferred, ok := pipeline.TypeCompatible(decl.Type, pp.Value); !ok {
-				out = append(out, Diagnostic{Line: pp.Line, StartCol: pp.ValueCol, EndLine: pp.Line, EndCol: lineLen,
+				out = append(out, Diagnostic{Line: pp.ValueLine, StartCol: pp.ValueCol, EndLine: pp.ValueLine, EndCol: pp.ValueEnd,
 					Severity: SevWarning, Code: CodeTypeMismatch, templateLine: r.Line, param: name, paramType: decl.Type,
 					Message: fmt.Sprintf("Type mismatch for parameter '%s': template expects '%s', got value '%s' (inferred as '%s')", name, decl.Type, pp.Value, inferred)})
 				continue
@@ -211,7 +249,7 @@ func (e *Engine) checkCallSite(f *fileInfo, r pipeline.TemplateRef) []Diagnostic
 				}
 			}
 			if !allowed {
-				out = append(out, Diagnostic{Line: pp.Line, StartCol: pp.ValueCol, EndLine: pp.Line, EndCol: lineLen,
+				out = append(out, Diagnostic{Line: pp.ValueLine, StartCol: pp.ValueCol, EndLine: pp.ValueLine, EndCol: pp.ValueEnd,
 					Severity: SevError, Code: CodeValueNotAllowed, templateLine: r.Line, param: name, values: decl.Values,
 					Message: fmt.Sprintf("Value '%s' is not allowed for parameter '%s'. Allowed: %s", v, name, strings.Join(decl.Values, ", "))})
 			}

@@ -63,11 +63,19 @@ func TemplateRefOnLine(line string, lineNo int) (TemplateRef, bool) {
 	}, true
 }
 
-// FindTemplateRefs returns every template reference in a document.
+// FindTemplateRefs returns every template reference in a document. Lines
+// inside block scalars (`script: |` bodies) are text and are skipped.
 func FindTemplateRefs(lines []string) []TemplateRef {
 	var out []TemplateRef
+	var mask []bool
 	for i, l := range lines {
 		if !strings.Contains(l, "template") {
+			continue
+		}
+		if mask == nil {
+			mask = BlockScalarMask(lines)
+		}
+		if mask[i] {
 			continue
 		}
 		if r, ok := TemplateRefOnLine(l, i); ok {
@@ -78,8 +86,9 @@ func FindTemplateRefs(lines []string) []TemplateRef {
 }
 
 var (
-	paramsKeyRe = regexp.MustCompile(`^\s*(?:-\s+)?parameters\s*:\s*$`)
-	keyPrefixRe = regexp.MustCompile(`^\s*(?:-\s+)?`)
+	paramsKeyRe    = regexp.MustCompile(`^\s*(?:-\s+)?parameters\s*:\s*$`)
+	paramsAnyKeyRe = regexp.MustCompile(`^\s*(?:-\s+)?parameters\s*:(?:\s|$)`)
+	keyPrefixRe    = regexp.MustCompile(`^\s*(?:-\s+)?`)
 )
 
 // IsParametersKey reports whether the line is a bare `parameters:` key
@@ -227,13 +236,14 @@ func FindCallSite(lines []string, cursorLine int) (CallSiteContext, bool) {
 
 // FindParametersLine returns the line of the `parameters:` key that is a
 // sibling of a template call's `template:` key, or -1. The block may come
-// before or after `template:`.
+// before or after `template:`. The key may open a block or carry an inline
+// value (`parameters: { a: 1 }`, `parameters: ${{ parameters }}`).
 func FindParametersLine(lines []string, templateLine int) int {
 	if templateLine < 0 || templateLine >= len(lines) {
 		return -1
 	}
 	for _, i := range MappingSiblings(lines, templateLine) {
-		if i != templateLine && IsParametersKey(lines[i]) {
+		if i != templateLine && paramsAnyKeyRe.MatchString(StripComment(lines[i])) {
 			return i
 		}
 	}
