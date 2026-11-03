@@ -1,0 +1,12 @@
+# Security team — credential scanning (repo: Security/security-templates).
+parameters:
+  - name: suppressionsFile
+    type: string
+    default: .config/credscan-suppressions.json
+  - name: failOnFindings
+    type: boolean
+    default: true
+
+steps:
+  - script: echo "credscan (suppressions=${{ parameters.suppressionsFile }}, fail=${{ parameters.failOnFindings }})"
+    displayName: Credential scan

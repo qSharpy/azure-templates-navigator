@@ -1,0 +1,35 @@
+# Platform team — deploy stage. The environment name is also the name of the
+# Azure DevOps environment, which is where the "Required template" check lives.
+parameters:
+  - name: environment
+    type: string
+    values:
+      - dev
+      - test
+      - prod
+  - name: serviceConnection
+    type: string
+  - name: appName
+    type: string
+  - name: dependsOn
+    type: object
+    default: [Build]
+
+stages:
+  - stage: Deploy_${{ parameters.environment }}
+    displayName: Deploy to ${{ parameters.environment }}
+    dependsOn: ${{ parameters.dependsOn }}
+    jobs:
+      - deployment: Deploy
+        environment: ${{ parameters.environment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - download: current
+                  artifact: drop
+                - task: AzureWebApp@1
+                  inputs:
+                    azureSubscription: ${{ parameters.serviceConnection }}
+                    appName: ${{ parameters.appName }}
+                    package: $(Pipeline.Workspace)/drop/**/*.zip

@@ -1,0 +1,384 @@
+{
+  "name": "azure-templates-navigator",
+  "displayName": "Azure Templates Navigator",
+  "description": "Hover, validate, autocomplete and navigate Azure Pipelines YAML templates — including templates from other repositories, which are downloaded automatically.",
+  "version": "2.0.0",
+  "publisher": "bogdanbujor",
+  "license": "MIT",
+  "icon": "logo.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qSharpy/azure-templates-navigator.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Azure",
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "azure",
+    "pipelines",
+    "yaml",
+    "templates",
+    "devops",
+    "intellisense",
+    "diagnostics",
+    "autocomplete",
+    "graph",
+    "dependency"
+  ],
+  "activationEvents": [
+    "onLanguage:yaml",
+    "workspaceContains:**/*.{yml,yaml}"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Azure Templates Navigator",
+      "properties": {
+        "azure-templates-navigator.requiredParameterColor": {
+          "type": "string",
+          "default": "#c92d35",
+          "description": "Hex color used to highlight required parameters in hover tooltips."
+        },
+        "azure-templates-navigator.diagnostics.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Validate template call sites (missing required / unknown parameters, type mismatches, disallowed values, missing templates)."
+        },
+        "azure-templates-navigator.diagnostics.unusedParameters": {
+          "type": "boolean",
+          "default": true,
+          "description": "Warn about parameters a template declares but never references."
+        },
+        "azure-templates-navigator.graph.rootPath": {
+          "type": "string",
+          "default": "",
+          "scope": "resource",
+          "description": "Sub-folder (relative to the workspace root) shown in the workspace-wide Template Graph. Empty = whole workspace."
+        },
+        "azure-templates-navigator.repositories.autoFetch": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically download repositories referenced via `resources.repositories` (e.g. `template: x.yml@templates`) when they are not available locally. Uses your normal `git` credentials."
+        },
+        "azure-templates-navigator.repositories.cacheDir": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder where downloaded repositories are kept. Empty = `~/.azure-templates-navigator/repos` (shared by VS Code, IntelliJ and the `atn` CLI)."
+        },
+        "azure-templates-navigator.repositories.refreshIntervalHours": {
+          "type": "number",
+          "default": 12,
+          "minimum": 0,
+          "description": "Re-fetch downloaded repositories in the background when older than this many hours. 0 = never."
+        },
+        "azure-templates-navigator.repositories.preferLocalClones": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Use a clone that sits next to your repository (`../<repo-name>`) instead of the download cache when one exists, so edits in your working copy are picked up immediately."
+        },
+        "azure-templates-navigator.repositories.urls": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Clone URL overrides, keyed by alias, repository `name:` or repository name. Example: `{ \"myorg/templates\": \"git@github.com:myorg/templates.git\" }`. Can also be committed in `.azure-templates-navigator.json`."
+        },
+        "azure-templates-navigator.repositories.localPaths": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Map a repository (alias, `name:` or repository name) to a local folder. Example: `{ \"templates\": \"~/src/pipeline-templates\" }`."
+        },
+        "azure-templates-navigator.repositories.azureDevOpsOrganization": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Azure DevOps organization hosting `type: git` repositories. Only needed when it can't be inferred from your repository's `origin` remote (e.g. your code lives on GitHub)."
+        },
+        "azure-templates-navigator.repositories.azureDevOpsProject": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Default Azure DevOps project for `type: git` repositories declared without a project (`name: repo`)."
+        },
+        "azure-templates-navigator.repositories.githubEnterpriseHost": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Host name for `type: githubenterprise` repositories, e.g. `github.mycompany.com`."
+        },
+        "azure-templates-navigator.repositories.gitPath": {
+          "type": "string",
+          "default": "git",
+          "description": "Path to the git executable used to download repositories."
+        },
+        "azure-templates-navigator.server.path": {
+          "type": "string",
+          "default": "",
+          "description": "Advanced: path to a custom 'atn' language server binary (for development)."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "azure-templates-navigator.openTemplate",
+        "title": "Open Template File",
+        "category": "Azure Templates",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "azure-templates-navigator.openTemplateBeside",
+        "title": "Open to Side",
+        "category": "Azure Templates",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "azure-templates-navigator.goToReference",
+        "title": "Go to Template Reference",
+        "category": "Azure Templates",
+        "icon": "$(references)"
+      },
+      {
+        "command": "azure-templates-navigator.copyTemplatePath",
+        "title": "Copy Path",
+        "category": "Azure Templates",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "azure-templates-navigator.showUsages",
+        "title": "Show Template Usages",
+        "category": "Azure Templates"
+      },
+      {
+        "command": "azure-templates-navigator.searchTemplates",
+        "title": "Search Templates…",
+        "category": "Azure Templates",
+        "icon": "$(search)"
+      },
+      {
+        "command": "azure-templates-navigator.searchParameters",
+        "title": "Search Template Parameters…",
+        "category": "Azure Templates",
+        "icon": "$(symbol-parameter)"
+      },
+      {
+        "command": "azure-templates-navigator.refresh",
+        "title": "Refresh",
+        "category": "Azure Templates",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "azure-templates-navigator.expandTemplateGraph",
+        "title": "Open Graph in Editor",
+        "category": "Azure Templates",
+        "icon": "$(screen-full)"
+      },
+      {
+        "command": "azure-templates-navigator.fetchRepository",
+        "title": "Fetch Repository",
+        "category": "Azure Templates",
+        "icon": "$(cloud-download)"
+      },
+      {
+        "command": "azure-templates-navigator.fetchAllRepositories",
+        "title": "Update All Downloaded Repositories",
+        "category": "Azure Templates",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "azure-templates-navigator.openRepositoryFolder",
+        "title": "Reveal Repository Folder",
+        "category": "Azure Templates",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "azure-templates-navigator.openCacheFolder",
+        "title": "Open Repository Cache Folder",
+        "category": "Azure Templates"
+      },
+      {
+        "command": "azure-templates-navigator.setRequiredParameterColor",
+        "title": "Set Required Parameter Color",
+        "category": "Azure Templates"
+      },
+      {
+        "command": "azure-templates-navigator.restartServer",
+        "title": "Restart Language Server",
+        "category": "Azure Templates"
+      },
+      {
+        "command": "azure-templates-navigator.showOutput",
+        "title": "Show Log",
+        "category": "Azure Templates"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "azure-templates-navigator",
+          "title": "Azure Templates Navigator",
+          "icon": "$(list-tree)"
+        }
+      ]
+    },
+    "views": {
+      "azure-templates-navigator": [
+        {
+          "id": "azure-templates-navigator.templateTree",
+          "name": "Dependencies",
+          "icon": "$(type-hierarchy-sub)"
+        },
+        {
+          "id": "azure-templates-navigator.graphView",
+          "name": "Template Graph",
+          "type": "webview",
+          "icon": "$(type-hierarchy)"
+        },
+        {
+          "id": "azure-templates-navigator.diagnosticsPanel",
+          "name": "Diagnostics",
+          "icon": "$(error)"
+        },
+        {
+          "id": "azure-templates-navigator.repositoriesView",
+          "name": "Repositories",
+          "icon": "$(repo)"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "azure-templates-navigator.repositoriesView",
+        "contents": "No `resources.repositories` found in this workspace.\nTemplates referenced as `path.yml@alias` are downloaded here automatically."
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "azure-templates-navigator.searchTemplates",
+          "when": "view == azure-templates-navigator.templateTree",
+          "group": "navigation@0"
+        },
+        {
+          "command": "azure-templates-navigator.refresh",
+          "when": "view == azure-templates-navigator.templateTree",
+          "group": "navigation@9"
+        },
+        {
+          "command": "azure-templates-navigator.expandTemplateGraph",
+          "when": "view == azure-templates-navigator.graphView",
+          "group": "navigation@0"
+        },
+        {
+          "command": "azure-templates-navigator.refresh",
+          "when": "view == azure-templates-navigator.graphView",
+          "group": "navigation@9"
+        },
+        {
+          "command": "azure-templates-navigator.refresh",
+          "when": "view == azure-templates-navigator.diagnosticsPanel",
+          "group": "navigation@9"
+        },
+        {
+          "command": "azure-templates-navigator.fetchAllRepositories",
+          "when": "view == azure-templates-navigator.repositoriesView",
+          "group": "navigation@0"
+        },
+        {
+          "command": "azure-templates-navigator.refresh",
+          "when": "view == azure-templates-navigator.repositoriesView",
+          "group": "navigation@9"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "azure-templates-navigator.openTemplateBeside",
+          "when": "view == azure-templates-navigator.templateTree && viewItem =~ /^file/",
+          "group": "inline@1"
+        },
+        {
+          "command": "azure-templates-navigator.goToReference",
+          "when": "view == azure-templates-navigator.templateTree && viewItem =~ /ref$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "azure-templates-navigator.openTemplateBeside",
+          "when": "view == azure-templates-navigator.templateTree && viewItem =~ /^file/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "azure-templates-navigator.goToReference",
+          "when": "view == azure-templates-navigator.templateTree && viewItem =~ /ref$/",
+          "group": "navigation@2"
+        },
+        {
+          "command": "azure-templates-navigator.copyTemplatePath",
+          "when": "view == azure-templates-navigator.templateTree && viewItem =~ /^file/",
+          "group": "navigation@3"
+        },
+        {
+          "command": "azure-templates-navigator.fetchRepository",
+          "when": "view == azure-templates-navigator.repositoriesView && viewItem =~ /^repo-(cache|missing|failed)/",
+          "group": "inline@1"
+        },
+        {
+          "command": "azure-templates-navigator.openRepositoryFolder",
+          "when": "view == azure-templates-navigator.repositoriesView && viewItem =~ /ready/",
+          "group": "inline@2"
+        },
+        {
+          "command": "azure-templates-navigator.fetchRepository",
+          "when": "view == azure-templates-navigator.templateTree && viewItem =~ /^repoUnavailable/",
+          "group": "inline@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "azure-templates-navigator.openTemplate",
+          "when": "false"
+        },
+        {
+          "command": "azure-templates-navigator.openTemplateBeside",
+          "when": "false"
+        },
+        {
+          "command": "azure-templates-navigator.goToReference",
+          "when": "false"
+        },
+        {
+          "command": "azure-templates-navigator.copyTemplatePath",
+          "when": "false"
+        },
+        {
+          "command": "azure-templates-navigator.openRepositoryFolder",
+          "when": "false"
+        },
+        {
+          "command": "azure-templates-navigator.showUsages",
+          "when": "false"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "assets": "node scripts/copy-assets.js",
+    "lint": "eslint extension.js src",
+    "test": "npm run assets && node test/e2e/run.js",
+    "package": "npm run assets && vsce package",
+    "vscode:prepublish": "node scripts/copy-assets.js --check"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.2.0",
+    "eslint": "^8.57.0"
+  }
+}

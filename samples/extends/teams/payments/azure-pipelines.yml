@@ -1,0 +1,32 @@
+# ============================================================
+# Team Payments — the happy path. Should show no problems.
+#
+# Extends the .NET golden path, which extends the secure base template.
+# Hover the template: line, Ctrl/Cmd-click through the chain, or open the
+# Dependencies view to see all three levels.
+# ============================================================
+trigger:
+  branches:
+    include: [main]
+
+resources:
+  repositories:
+    - repository: platform
+      type: git
+      name: Platform/platform-templates
+      ref: refs/tags/v3.2.0
+    - repository: security
+      type: git
+      name: Security/security-templates
+      ref: refs/heads/main
+
+extends:
+  template: pipelines/dotnet-service.yml@platform
+  parameters:
+    serviceName: payments-api
+    dotnetVersion: '8.x'
+    environments:
+      - name: dev
+        serviceConnection: sc-payments-dev
+      - name: prod
+        serviceConnection: sc-payments-prod

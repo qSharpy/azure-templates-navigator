@@ -1,0 +1,26 @@
+# ============================================================
+# Team Data — nightly job. Intentional mistake: '@platfrom' is a typo of
+# the declared alias, so nothing in the extends chain resolves.
+# ============================================================
+trigger: none
+schedules:
+  - cron: '0 3 * * *'
+    displayName: Nightly
+    branches:
+      include: [main]
+
+resources:
+  repositories:
+    - repository: platform
+      type: git
+      name: Platform/platform-templates
+      ref: refs/tags/v3.2.0
+    - repository: security
+      type: git
+      name: Security/security-templates
+      ref: refs/heads/main
+
+extends:
+  template: pipelines/dotnet-service.yml@platfrom
+  parameters:
+    serviceName: data-ingest-nightly

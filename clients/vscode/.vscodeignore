@@ -1,0 +1,9 @@
+.vscode/**
+.vscode-test/**
+test/**
+scripts/**
+**/*.map
+**/.eslintrc.json
+*.vsix
+node_modules/.bin/**
+images/**

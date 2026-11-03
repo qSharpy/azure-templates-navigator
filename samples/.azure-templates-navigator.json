@@ -1,0 +1,9 @@
+{
+  "repositories": {
+    "localPaths": {
+      "templates": ".",
+      "platform-templates": "extends/platform-templates",
+      "security-templates": "extends/security-templates"
+    }
+  }
+}

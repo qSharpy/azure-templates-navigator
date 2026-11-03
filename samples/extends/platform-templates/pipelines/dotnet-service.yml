@@ -1,0 +1,54 @@
+# ============================================================
+# Platform team — golden path for .NET services
+#
+# An extends template that itself extends secure-base.yml. A team passes a
+# service name and its environments, and gets build → test → deploy stages
+# wrapped in the org's security stage.
+#
+#   team pipeline ──extends──▶ dotnet-service.yml ──extends──▶ secure-base.yml
+#                                    │                              │
+#                                    ├─ stages/build-dotnet.yml     └─ steps/*.yml@security
+#                                    └─ stages/deploy-webapp.yml (once per environment)
+# ============================================================
+parameters:
+  - name: serviceName
+    type: string
+  - name: projects
+    type: string
+    default: '**/*.csproj'
+  - name: dotnetVersion
+    type: string
+    default: '8.x'
+    values:
+      - '6.x'
+      - '8.x'
+      - '9.x'
+  - name: environments
+    displayName: One deploy stage per entry
+    type: object
+    default:
+      - name: dev
+        serviceConnection: sc-dev
+  - name: runIntegrationTests
+    type: boolean
+    default: true
+
+extends:
+  template: secure-base.yml
+  parameters:
+    sdl:
+      credscan: true
+      sbom: true
+    stages:
+      - template: ../stages/build-dotnet.yml
+        parameters:
+          serviceName: ${{ parameters.serviceName }}
+          projects: ${{ parameters.projects }}
+          dotnetVersion: ${{ parameters.dotnetVersion }}
+          runIntegrationTests: ${{ parameters.runIntegrationTests }}
+      - ${{ each env in parameters.environments }}:
+        - template: ../stages/deploy-webapp.yml
+          parameters:
+            environment: ${{ env.name }}
+            serviceConnection: ${{ env.serviceConnection }}
+            appName: ${{ parameters.serviceName }}-${{ env.name }}

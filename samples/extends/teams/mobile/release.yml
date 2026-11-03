@@ -1,0 +1,50 @@
+# ============================================================
+# Team Mobile — manual release pipeline with runtime parameters (the form
+# shown in "Run pipeline"). Should show no problems.
+#
+# Shows:
+#   - runtime parameters forwarded into extends: parameters
+#   - an ${{ if }} block inside the extends: parameters
+#   - parameters: written *before* template: (valid YAML; Azure accepts both orders)
+# ============================================================
+parameters:
+  - name: environment
+    displayName: Target environment
+    type: string
+    default: test
+    values:
+      - dev
+      - test
+      - prod
+  - name: skipSecurity
+    displayName: Break-glass (skip the security stage)
+    type: boolean
+    default: false
+
+trigger: none
+
+resources:
+  repositories:
+    - repository: platform
+      type: git
+      name: Platform/platform-templates
+      ref: refs/tags/v3.2.0
+    - repository: security
+      type: git
+      name: Security/security-templates
+      ref: refs/heads/main
+
+extends:
+  parameters:
+    breakGlass: ${{ parameters.skipSecurity }}
+    ${{ if eq(parameters.environment, 'prod') }}:
+      pool:
+        name: mobile-signing-pool
+    stages:
+      - template: stages/deploy-webapp.yml@platform
+        parameters:
+          environment: ${{ parameters.environment }}
+          serviceConnection: sc-mobile-${{ parameters.environment }}
+          appName: mobile-backend
+          dependsOn: []
+  template: pipelines/secure-base.yml@platform

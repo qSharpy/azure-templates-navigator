@@ -1,0 +1,22 @@
+# Platform team — the build job used by stages/build-dotnet.yml.
+parameters:
+  - name: projects
+    type: string
+  - name: dotnetVersion
+    type: string
+  - name: configuration
+    type: string
+    default: Release
+
+jobs:
+  - job: Build_dotnet
+    displayName: dotnet build
+    steps:
+      - task: UseDotNet@2
+        inputs:
+          version: ${{ parameters.dotnetVersion }}
+      - script: dotnet build ${{ parameters.projects }} -c ${{ parameters.configuration }}
+        displayName: Build
+      - template: ../steps/publish-artifact.yml
+        parameters:
+          artifactName: drop

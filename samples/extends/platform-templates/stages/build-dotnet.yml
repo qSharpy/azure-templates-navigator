@@ -1,0 +1,31 @@
+# Platform team — build stage for .NET services.
+parameters:
+  - name: serviceName
+    type: string
+  - name: projects
+    type: string
+  - name: dotnetVersion
+    type: string
+    default: '8.x'
+  - name: configuration
+    type: string
+    default: Release
+    values: [Debug, Release]
+  - name: runIntegrationTests
+    type: boolean
+    default: true
+
+stages:
+  - stage: Build
+    displayName: Build ${{ parameters.serviceName }}
+    jobs:
+      - template: ../jobs/dotnet-build-job.yml
+        parameters:
+          projects: ${{ parameters.projects }}
+          dotnetVersion: ${{ parameters.dotnetVersion }}
+          configuration: ${{ parameters.configuration }}
+      - ${{ if eq(parameters.runIntegrationTests, true) }}:
+        - job: IntegrationTests
+          dependsOn: Build_dotnet
+          steps:
+            - script: dotnet test ${{ parameters.projects }} --filter Category=Integration

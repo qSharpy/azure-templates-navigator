@@ -1,0 +1,28 @@
+# ============================================================
+# Team Data — looks fine in the editor, but FAILS when the run is queued.
+#
+# secure-base.yml uses steps/credscan.yml@security, but this pipeline only
+# declares @platform. Azure resolves aliases against the root pipeline's
+# resources, so the run fails with:
+#   "Could not find a repository with alias 'security'"
+#
+# NOT DETECTED YET. The navigator resolves '@security' through the other
+# pipelines in the workspace that declare it. This is the kind of
+# "will it run?" check the roadmap is about.
+# ============================================================
+trigger:
+  branches:
+    include: [main]
+
+resources:
+  repositories:
+    - repository: platform
+      type: git
+      name: Platform/platform-templates
+      ref: refs/tags/v3.2.0
+
+extends:
+  template: pipelines/dotnet-service.yml@platform
+  parameters:
+    serviceName: data-ingest
+    runIntegrationTests: false

@@ -1,0 +1,15 @@
+# build outputs
+dist/
+clients/vscode/bin/
+clients/vscode/media/
+clients/vscode/node_modules/
+clients/vscode/.vscode-test/
+clients/vscode/*.vsix
+clients/intellij/.gradle/
+clients/intellij/.intellijPlatform/
+clients/intellij/build/
+clients/intellij/.kotlin/
+# editors / OS
+.idea/
+*.iml
+.DS_Store

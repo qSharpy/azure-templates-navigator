@@ -1,0 +1,32 @@
+# ============================================================
+# Platform team — smoke-test pipeline that lives in the template repo itself.
+#
+# Template writers run this on their branch before tagging a release. It
+# extends the template with a relative path (no alias), so it always tests
+# the working copy. It still has to declare @security, because
+# secure-base.yml uses it.
+# ============================================================
+trigger: none
+pr:
+  branches:
+    include: [main]
+
+resources:
+  repositories:
+    - repository: security
+      type: git
+      name: Security/security-templates
+      ref: refs/heads/main
+
+extends:
+  template: ../pipelines/secure-base.yml
+  parameters:
+    sdl:
+      credscan: true
+      sbom: true
+    stages:
+      - stage: Smoke
+        jobs:
+          - job: Echo
+            steps:
+              - script: echo "secure-base expanded fine"

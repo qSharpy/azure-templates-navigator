@@ -1,0 +1,97 @@
+# Release: push a tag vX.Y.Z (matching VERSION) and this tests, builds and
+# publishes everything. See "Releasing" in CLAUDE.md.
+#
+# Secrets (Settings → Secrets and variables → Actions):
+#   VSCE_PAT                   VS Code Marketplace (Azure DevOps PAT, Marketplace → Manage)
+#   JETBRAINS_MARKETPLACE_TOKEN  JetBrains Marketplace (profile → My Tokens)
+#   OVSX_PAT                   optional, Open VSX; the step is skipped without it
+#
+# Re-running after a failure is safe: VS Code and Open VSX skip versions that
+# are already there, the GitHub release is updated in place, and JetBrains
+# (which rejects duplicates) runs last.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TAG: ${{ github.ref_name }}
+      HAS_OVSX: ${{ secrets.OVSX_PAT != '' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check tag, VERSION and CHANGELOG agree
+        run: |
+          version="$(cat VERSION)"
+          [ "$TAG" = "v$version" ] || { echo "::error::tag $TAG does not match VERSION $version"; exit 1; }
+          heading="$(grep -m1 "^## \[$version\]" CHANGELOG.md || true)"
+          [ -n "$heading" ] || { echo "::error::CHANGELOG.md has no '## [$version]' section"; exit 1; }
+          if echo "$heading" | grep -qi unreleased; then echo "::error::CHANGELOG.md still says $version is unreleased"; exit 1; fi
+          awk -v v="## [$version]" 'index($0, v) == 1 {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache-dependency-path: server/go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: clients/vscode/package-lock.json
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Test
+        run: |
+          scripts/build.sh dev
+          xvfb-run -a scripts/build.sh test
+
+      - name: Build
+        run: |
+          scripts/build.sh vscode-targets
+          scripts/build.sh intellij
+          ls -l dist dist/release
+
+      - name: Publish to VS Code Marketplace
+        working-directory: clients/vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npx vsce publish --skip-duplicate --packagePath ../../dist/*.vsix
+
+      - name: Publish to Open VSX
+        if: env.HAS_OVSX == 'true'
+        working-directory: clients/vscode
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --yes ovsx publish --skip-duplicate --packagePath ../../dist/*.vsix
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/*.vsix dist/*.zip dist/release/* --clobber
+          else
+            gh release create "$TAG" dist/*.vsix dist/*.zip dist/release/* --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+
+      - name: Publish to JetBrains Marketplace
+        working-directory: clients/intellij
+        env:
+          PUBLISH_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+        run: ./gradlew publishPlugin

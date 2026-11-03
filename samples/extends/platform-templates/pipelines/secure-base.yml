@@ -1,0 +1,58 @@
+# ============================================================
+# Platform team — the governed base template (repo: Platform/platform-templates)
+#
+# Every production pipeline extends this file, directly or through a
+# "golden path" template such as dotnet-service.yml. The prod environments
+# have a "Required template" check pointing at it, so a pipeline that does
+# not extend it cannot deploy.
+#
+# It runs the org's security stage first, then the stages the team passes in.
+# The security steps live in another team's repo (@security). This file does
+# not declare that alias; every pipeline that extends it has to.
+# ============================================================
+parameters:
+  - name: stages
+    displayName: The team's own stages
+    type: stageList
+  - name: pool
+    type: object
+    default:
+      vmImage: ubuntu-latest
+  - name: preBuildSteps
+    displayName: Steps that run before the security scans (cache restore, auth...)
+    type: stepList
+    default: []
+  - name: sdl
+    displayName: Which scans to run
+    type: object
+    default:
+      credscan: true
+      sbom: true
+  - name: breakGlass
+    displayName: Skip the security stage (incident use only — audited)
+    type: boolean
+    default: false
+  # Removed from the body in v3.0, still declared so v2 consumers don't break.
+  - name: legacyAgentPool
+    type: string
+    default: ''
+
+stages:
+  - ${{ if not(parameters.breakGlass) }}:
+    - stage: Security
+      displayName: Security scans
+      pool: ${{ parameters.pool }}
+      jobs:
+        - job: Scan
+          steps:
+            - checkout: self
+            - ${{ parameters.preBuildSteps }}
+            - ${{ if eq(parameters.sdl.credscan, true) }}:
+              - template: steps/credscan.yml@security
+            - ${{ if eq(parameters.sdl.sbom, true) }}:
+              - template: steps/sbom.yml@security
+                parameters:
+                  packageName: $(Build.Repository.Name)
+
+  - ${{ each stage in parameters.stages }}:
+    - ${{ stage }}

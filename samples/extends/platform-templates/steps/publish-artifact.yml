@@ -1,0 +1,12 @@
+# Platform team — shared step template.
+parameters:
+  - name: artifactName
+    type: string
+  - name: path
+    type: string
+    default: $(Build.ArtifactStagingDirectory)
+
+steps:
+  - publish: ${{ parameters.path }}
+    artifact: ${{ parameters.artifactName }}
+    displayName: Publish ${{ parameters.artifactName }}

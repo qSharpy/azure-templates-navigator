@@ -1,0 +1,94 @@
+<idea-plugin>
+    <id>com.bogdanbujor.azure-templates-navigator</id>
+    <name>Azure Templates Navigator</name>
+    <vendor email="bogdan.bujor08@gmail.com" url="https://github.com/qSharpy">bogdanbujor</vendor>
+    <description><![CDATA[
+        <p><b>Azure Templates Navigator</b> — full IDE support for Azure Pipelines YAML templates.</p>
+        <ul>
+            <li><b>Hover</b> any <code>template:</code> reference to see its parameters, types, defaults and allowed values</li>
+            <li><b>Go to declaration</b> on templates, passed parameters, <code>parameters.x</code> and <code>$(variables)</code></li>
+            <li><b>Completion</b> for template paths, parameter names and allowed values</li>
+            <li><b>Validation + quick fixes</b>: missing/unknown parameters (with "did you mean"), type mismatches, disallowed values, unused parameters, missing templates</li>
+            <li><b>Templates from other repositories</b> (<code>template: x.yml@alias</code>) are <b>downloaded automatically</b> into a shared cache using your normal git credentials — no manual cloning</li>
+            <li><b>Find Usages</b>, <b>Call Hierarchy</b> and a <b>Code Vision</b> "N usages" hint on templates and their parameters — see which pipelines use a template before you change it</li>
+            <li><b>Structure view</b> of pipelines: stages, jobs, steps, template calls, <code>${{ if }}</code> blocks and parameters</li>
+            <li><b>Dependencies tree</b>, interactive <b>template graph</b>, project-wide <b>diagnostics</b> and <b>repositories</b> views</li>
+        </ul>
+        <p>Powered by the same engine as the VS Code extension and the <code>atn</code> CLI, so behaviour is identical everywhere.</p>
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <h3>2.0.0</h3>
+        <ul>
+            <li>New shared engine (also used by the VS Code extension and the <code>atn</code> CLI) — identical behaviour across IDEs</li>
+            <li>Templates referenced from other repositories are downloaded automatically (GitHub, Azure Repos, Bitbucket, GitHub Enterprise)</li>
+            <li>New checks: disallowed values, missing template files, unknown repository aliases, "did you mean" for misspelled parameters</li>
+            <li>Template path and allowed-value completion; hover on passed parameters and <code>parameters.x</code></li>
+            <li>Search Template Parameters… (editor context menu) to filter long parameter lists and jump to a declaration</li>
+            <li>New Repositories tab; all views merged into one "Azure Templates" tool window</li>
+            <li>Requires IntelliJ 2024.2+ and the LSP4IJ plugin (installed automatically)</li>
+            <li>Native IntelliJ UI: Find Usages, Call Hierarchy, Code Vision usage counts, Structure view, gutter icons on template references, IntelliJ toolbar and menus in the graph, plain documentation popups</li>
+            <li><code>extends:</code> templates are fully validated (parameters next to <code>template:</code> were previously ignored)</li>
+            <li>New check: <code>${{ parameters.x }}</code> where <code>x</code> is not declared</li>
+        </ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>org.jetbrains.plugins.yaml</depends>
+    <depends>com.redhat.devtools.lsp4ij</depends>
+
+    <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
+        <server id="azureTemplatesNavigator"
+                name="Azure Templates Navigator"
+                factoryClass="com.bogdanbujor.azuretemplates.lsp.AtnServerFactory">
+            <description><![CDATA[Azure Pipelines template navigation and validation (atn).]]></description>
+        </server>
+        <languageMapping language="yaml" serverId="azureTemplatesNavigator"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Azure Templates" anchor="right" icon="/icons/toolWindow.svg"
+                    factoryClass="com.bogdanbujor.azuretemplates.ui.AtnToolWindowFactory"/>
+
+        <!-- Native IntelliJ views fed by the language server -->
+        <!-- Structure view: the server's outline for pipeline files, the YAML plugin's for any other YAML -->
+        <lang.psiStructureViewFactory language="yaml" order="first"
+                                      implementationClass="com.bogdanbujor.azuretemplates.ui.AtnStructureViewFactory"/>
+        <!-- Call Hierarchy (Ctrl+Alt+H): which pipelines/templates reference this template, and what it references.
+             LSP4IJ registers its provider for TEXT/TextMate only, so YAML needs it here. -->
+        <callHierarchyProvider language="yaml"
+                               implementationClass="com.redhat.devtools.lsp4ij.features.callHierarchy.LSPCallHierarchyProvider"/>
+        <!-- Gutter icon on template: references -->
+        <codeInsight.lineMarkerProvider language="yaml"
+                                        implementationClass="com.bogdanbujor.azuretemplates.ui.TemplateLineMarkerProvider"/>
+        <applicationConfigurable parentId="tools" displayName="Azure Templates Navigator"
+                                 id="com.bogdanbujor.azuretemplates.settings"
+                                 instance="com.bogdanbujor.azuretemplates.settings.AtnSettingsConfigurable"/>
+        <postStartupActivity implementation="com.bogdanbujor.azuretemplates.lsp.AtnStartupActivity"/>
+        <notificationGroup id="Azure Templates Navigator" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <group id="AzureTemplatesNavigator.Menu" text="Azure Templates" popup="true">
+            <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="AzureTemplatesNavigator.Search" class="com.bogdanbujor.azuretemplates.ui.SearchTemplatesAction"
+                    text="Search Templates…" icon="AllIcons.Actions.Search"/>
+            <action id="AzureTemplatesNavigator.SearchParameters" class="com.bogdanbujor.azuretemplates.ui.SearchParametersAction"
+                    text="Search Template Parameters…" description="List the parameters of the template at the caret and jump to one">
+                <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            </action>
+            <!-- Also the target of the "N usages" Code Vision lens: LSP4IJ runs the action whose id is the lens command. -->
+            <action id="AzureTemplatesNavigator.showUsages" class="com.bogdanbujor.azuretemplates.ui.ShowUsagesAction"
+                    text="Show Template Usages" icon="AllIcons.Actions.Find"
+                    description="Pipelines and templates that use the template or parameter at the caret"/>
+            <action id="AzureTemplatesNavigator.FetchAll" class="com.bogdanbujor.azuretemplates.ui.FetchAllRepositoriesAction"
+                    text="Update Downloaded Repositories" icon="AllIcons.Actions.Download"/>
+            <action id="AzureTemplatesNavigator.OpenCache" class="com.bogdanbujor.azuretemplates.ui.OpenCacheFolderAction"
+                    text="Open Repository Cache Folder"/>
+            <action id="AzureTemplatesNavigator.Refresh" class="com.bogdanbujor.azuretemplates.ui.RefreshAction"
+                    text="Refresh" icon="AllIcons.Actions.Refresh"/>
+            <action id="AzureTemplatesNavigator.Restart" class="com.bogdanbujor.azuretemplates.ui.RestartServerAction"
+                    text="Restart Language Server"/>
+        </group>
+    </actions>
+</idea-plugin>

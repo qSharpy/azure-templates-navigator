@@ -1,0 +1,374 @@
+<!-- Shared by the VS Code and IntelliJ clients. Hosts fill the HEAD and SCRIPTS placeholders below. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {{HEAD}}
+  <title>Template Graph</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--vscode-editor-background);
+      color: var(--vscode-editor-foreground);
+      font-family: var(--vscode-font-family);
+      font-size: var(--vscode-font-size);
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Search bar ─────────────────────────────────────────────────────── */
+    #search-bar {
+      padding: 4px 8px;
+      background: var(--vscode-sideBar-background);
+      border-bottom: 1px solid var(--vscode-panel-border);
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    #search-input {
+      width: 100%;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border, transparent);
+      border-radius: 3px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-family: inherit;
+      outline: none;
+    }
+    #search-input:focus {
+      border-color: var(--vscode-focusBorder);
+    }
+    #search-input::placeholder {
+      color: var(--vscode-input-placeholderForeground);
+    }
+
+    /* Floating results dropdown — overlays the graph canvas */
+    #search-results {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+      border: 1px solid var(--vscode-panel-border);
+      border-top: none;
+      z-index: 500;
+      max-height: 260px;
+      overflow-y: auto;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    #search-results.open { display: block; }
+
+    .sr-item {
+      display: flex;
+      flex-direction: column;
+      padding: 4px 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .sr-item:hover, .sr-item.focused {
+      background: var(--vscode-list-hoverBackground);
+    }
+    .sr-name {
+      font-size: 11px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .sr-path {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #search-empty {
+      padding: 6px 10px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+    }
+
+    /* ── Toolbar row 1: action buttons ──────────────────────────────────── */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 8px;
+      background: var(--vscode-sideBar-background);
+      border-bottom: 1px solid var(--vscode-panel-border);
+      flex-shrink: 0;
+    }
+
+    #toolbar-spacer {
+      flex: 1;
+    }
+
+    #toolbar button {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 3px;
+      padding: 2px 7px;
+      cursor: pointer;
+      font-size: 11px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    #toolbar button:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+
+    /* File-scope toggle button — highlights when file scope is active */
+    #btn-file-scope.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    #btn-file-scope.active:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+    #btn-file-scope:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Full-path toggle button — highlights when full paths are shown */
+    #btn-full-path.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    #btn-full-path.active:hover {
+      background: var(--vscode-button-hoverBackground);
+    }
+
+    /* Depth controls — only visible in file-scope mode */
+    #depth-controls {
+      display: none;
+      align-items: center;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+    #depth-controls.visible {
+      display: flex;
+    }
+    #depth-controls label {
+      font-size: 10px;
+      color: var(--vscode-descriptionForeground);
+      white-space: nowrap;
+      user-select: none;
+      padding: 0 2px;
+    }
+    #depth-controls button {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 3px;
+      padding: 1px 6px;
+      cursor: pointer;
+      font-size: 13px;
+      line-height: 1.4;
+      flex-shrink: 0;
+    }
+    #depth-controls button:hover {
+      background: var(--vscode-button-secondaryHoverBackground);
+    }
+    #depth-controls button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+    #depth-value {
+      font-size: 11px;
+      font-weight: 600;
+      min-width: 14px;
+      text-align: center;
+      color: var(--vscode-editor-foreground);
+      user-select: none;
+    }
+
+    #graph-container {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+
+    svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Context menu */
+    #ctx-menu {
+      position: absolute;
+      display: none;
+      background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+      border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      padding: 4px 0;
+      min-width: 160px;
+      z-index: 200;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    }
+    .ctx-item {
+      padding: 5px 14px;
+      font-size: 11px;
+      cursor: pointer;
+      color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+      white-space: nowrap;
+    }
+    .ctx-item:hover {
+      background: var(--vscode-menu-selectionBackground, var(--vscode-list-activeSelectionBackground));
+      color: var(--vscode-menu-selectionForeground, var(--vscode-list-activeSelectionForeground));
+    }
+
+    /* Empty state */
+    #empty-state {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 8px;
+      color: var(--vscode-descriptionForeground);
+      font-size: 12px;
+      text-align: center;
+      padding: 20px;
+    }
+    #empty-state .icon { font-size: 32px; }
+    body.native-chrome #empty-state .icon { display: none; }
+
+    /* Native-chrome hosts (IntelliJ) provide the toolbar and search. */
+    body.native-chrome #search-bar,
+    body.native-chrome #toolbar { display: none; }
+
+    /* Legend */
+    #legend {
+      position: absolute;
+      bottom: 8px;
+      right: 8px;
+      background: var(--vscode-sideBar-background);
+      border: 1px solid var(--vscode-panel-border);
+      border-radius: 4px;
+      font-size: 10px;
+      line-height: 1.8;
+      opacity: 0.9;
+      user-select: none;
+    }
+    #legend-toggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 10px;
+      color: var(--vscode-foreground);
+      white-space: nowrap;
+    }
+    #legend-toggle:hover {
+      background: var(--vscode-list-hoverBackground);
+      border-radius: 4px;
+    }
+    #legend-arrow {
+      font-size: 8px;
+      transition: transform 0.15s ease;
+      display: inline-block;
+    }
+    #legend.open #legend-arrow {
+      transform: rotate(90deg);
+    }
+    #legend-body {
+      display: none;
+      padding: 0 10px 6px 10px;
+      border-top: 1px solid var(--vscode-panel-border);
+    }
+    #legend.open #legend-body {
+      display: block;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+    .legend-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+  <!-- Search bar: full-width input above the toolbar -->
+  <div id="search-bar">
+    <input id="search-input" type="text" placeholder="Search templates…" autocomplete="off" spellcheck="false" />
+    <div id="search-results">
+      <div id="search-empty" style="display:none">No templates found.</div>
+    </div>
+  </div>
+
+  <!-- Toolbar: Fit · File/Workspace · Depth · [spacer] · Full Path -->
+  <div id="toolbar">
+    <button id="btn-fit"        title="Fit graph to view">⊡ Fit</button>
+    <button id="btn-file-scope" title="Scope graph to the currently open file" class="active">File</button>
+    <!-- Depth controls: only shown in file-scope mode -->
+    <div id="depth-controls" title="Graph depth: how many upstream/downstream levels to render (1–10)">
+      <label>Depth</label>
+      <button id="btn-depth-dec" title="Decrease depth">−</button>
+      <span id="depth-value">1</span>
+      <button id="btn-depth-inc" title="Increase depth">+</button>
+    </div>
+    <div id="toolbar-spacer"></div>
+    <button id="btn-full-path"  title="Toggle between filename and full workspace-relative path labels">⊞ Full Path</button>
+  </div>
+
+  <div id="graph-container">
+    <svg id="svg">
+      <defs>
+        <marker id="arrow" viewBox="0 -4 10 8" refX="20" refY="0"
+                markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,-4L10,0L0,4" fill="#888" />
+        </marker>
+        <marker id="arrow-upstream" viewBox="0 -4 10 8" refX="20" refY="0"
+                markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M0,-4L10,0L0,4" fill="#e09a3d" />
+        </marker>
+        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+          <feDropShadow dx="0" dy="1" stdDeviation="2" flood-opacity="0.3"/>
+        </filter>
+      </defs>
+      <g id="zoom-layer">
+        <g id="edges-layer"></g>
+        <g id="edge-labels-layer"></g>
+        <g id="nodes-layer"></g>
+      </g>
+    </svg>
+
+    <div id="ctx-menu"></div>
+
+    <div id="empty-state">
+      <div class="icon">🗂️</div>
+      <div>No YAML template files found in the workspace.</div>
+      <div>Open a folder containing Azure Pipeline YAML files.</div>
+    </div>
+
+    <div id="legend">
+      <div id="legend-toggle" title="Toggle legend">
+        <span id="legend-arrow">▶</span> Legend
+      </div>
+      <div id="legend-body">
+        <div class="legend-item"><div class="legend-dot" style="background:#4e9de0"></div>Pipeline root</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#3dba8a"></div>Local template</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#9b6fd4"></div>External (cross-repo)</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#e05c5c"></div>Missing file</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#e09a3d"></div>Unknown alias</div>
+        <div style="margin-top:5px;border-top:1px solid var(--vscode-panel-border);padding-top:5px">
+          <div class="legend-item"><div style="width:18px;height:2px;background:#4e9de0;flex-shrink:0"></div>↓ downstream</div>
+          <div class="legend-item"><div style="width:18px;height:2px;background:#e09a3d;flex-shrink:0;border-top:2px dashed #e09a3d;margin-top:-2px"></div>↑ upstream</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {{SCRIPTS}}
+</body>
+</html>

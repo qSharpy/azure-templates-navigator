@@ -1,0 +1,64 @@
+# ============================================================
+# Team Search — extends the base template directly and writes its own
+# stages from the platform's building blocks.
+#
+# Intentional mistakes, all inside the extends: parameters (expected
+# diagnostics are listed in ../../README.md):
+#   - build-dotnet.yml is missing its required 'projects'
+#   - 'Releas' is not one of the allowed configurations
+#   - 'staging' is not an allowed environment
+#   - 'dependson' is a typo for 'dependsOn'
+#   - 'yes' (quoted) is not a boolean
+# ============================================================
+trigger:
+  branches:
+    include: [main]
+
+resources:
+  repositories:
+    - repository: platform
+      type: git
+      name: Platform/platform-templates
+      ref: refs/tags/v3.2.0
+    - repository: security
+      type: git
+      name: Security/security-templates
+      ref: refs/heads/main
+
+variables:
+  - name: indexName
+    value: search-prod
+
+extends:
+  template: pipelines/secure-base.yml@platform
+  parameters:
+    pool:
+      vmImage: ubuntu-22.04
+    preBuildSteps:
+      - script: ./tools/restore-cache.sh
+        displayName: Restore cache
+    sdl:
+      credscan: true
+      sbom: false
+    breakGlass: 'yes'
+    stages:
+      - template: stages/build-dotnet.yml@platform
+        parameters:
+          serviceName: search-indexer
+          configuration: Releas
+      - template: stages/deploy-webapp.yml@platform
+        parameters:
+          environment: staging
+          serviceConnection: sc-search
+          appName: search-indexer
+          dependson: [Build]
+      - stage: Reindex
+        dependsOn: Deploy_staging
+        jobs:
+          - job: Reindex
+            steps:
+              - script: ./tools/reindex.sh $(indexName)
+              - template: steps/publish-artifact.yml@platform
+                parameters:
+                  artifactName: index-snapshot
+                  path: $(Pipeline.Workspace)/index

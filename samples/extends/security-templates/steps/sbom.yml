@@ -1,0 +1,12 @@
+# Security team — SBOM generation.
+parameters:
+  - name: packageName
+    type: string
+  - name: format
+    type: string
+    default: spdx
+    values: [spdx, cyclonedx]
+
+steps:
+  - script: echo "Generating a ${{ parameters.format }} SBOM for ${{ parameters.packageName }}"
+    displayName: SBOM
