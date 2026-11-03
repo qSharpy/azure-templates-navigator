@@ -3,7 +3,7 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
-## [2.0.0] — unreleased
+## [2.0.0] — 2026-11-03
 
 ### Architecture
 
