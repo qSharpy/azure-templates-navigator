@@ -90,6 +90,56 @@ async function run() {
   console.log('symbols:', syms.map(s => s.name).join(', '));
   assert.ok(syms.some(s => s.name === 'parameters' && s.children.some(c => c.name === 'stages')), 'outline has parameters');
 
+  // 8. Stats view (atn/stats) and Show in Graph (atn/graph filters)
+  const api = ext.exports;
+  for (const c of ['showInGraph']) assert.ok(all.includes(`azure-templates-navigator.${c}`), c);
+  const sections = await waitFor(() => api.request('atn/stats'));
+  console.log('stats:', sections.map(s => `${s.id}=${s.rows.length}`).join(', '));
+  const byId = Object.fromEntries(sections.map(s => [s.id, s]));
+  for (const id of ['overview', 'mostUsed', 'misCalled', 'fanOut', 'unused', 'repositories']) assert.ok(byId[id], id);
+  assert.ok(byId.mostUsed.rows.length > 0 && byId.mostUsed.rows[0].focus === 'file');
+  assert.ok(byId.unused.rows.some(r => r.filePath.endsWith('stale-template.yml')), 'stale-template.yml is unused');
+  const roots = await api.stats.getChildren();
+  assert.strictEqual(roots.length, sections.length);
+  const usedRows = await api.stats.getChildren(roots.find(r => r.section.id === 'mostUsed'));
+  const usedItem = api.stats.getTreeItem(usedRows[0]);
+  assert.strictEqual(usedItem.command.command, 'azure-templates-navigator.openTemplate');
+  assert.strictEqual(usedItem.contextValue, 'stat-file');
+
+  // Show in Graph on a template: the graph is scoped to it, nodes carry size and tooltip.
+  const top = usedRows[0].row;
+  await vscode.commands.executeCommand('azure-templates-navigator.showInGraph', usedRows[0]);
+  const fg = await waitFor(() => {
+    const l = api.graph.lastGraph;
+    return l && l.scopedFile === top.filePath ? l : null;
+  });
+  const focal = fg.nodes.find(n => n.filePath === top.filePath);
+  console.log('graph focus:', top.label, `weight ${focal.weight},`, `${fg.nodes.length}/${fg.totalNodes} nodes`);
+  assert.ok(focal.weight > 0 && focal.callers > 0 && focal.tooltip.includes('Used by'), 'node size and tooltip');
+
+  // By repository: the workspace graph filtered to that repository (callers faded).
+  const repoRow = byId.repositories.rows[0];
+  await vscode.commands.executeCommand('azure-templates-navigator.showInGraph', { row: repoRow });
+  const rg = await waitFor(() => {
+    const l = api.graph.lastGraph;
+    return l && !l.scopedFile && l.filter.repos[0] === repoRow.repo ? l : null;
+  });
+  console.log('graph repo filter:', repoRow.repo, `${rg.nodes.length}/${rg.totalNodes} nodes`);
+  assert.ok(rg.nodes.length > 0 && rg.nodes.length < rg.totalNodes);
+  assert.ok(rg.nodes.every(n => n.context || n.repoName === repoRow.repo));
+  assert.ok(rg.facets.repos.length > 1);
+
+  // Errors: problems only.
+  const errRow = byId.overview.rows.find(r => r.kind === 'error');
+  await vscode.commands.executeCommand('azure-templates-navigator.showInGraph', { row: errRow });
+  const pg = await waitFor(() => {
+    const l = api.graph.lastGraph;
+    return l && l.filter.problemsOnly ? l : null;
+  });
+  console.log('graph problems:', `${pg.nodes.length}/${pg.totalNodes} nodes, facet ${pg.facets.problems}`);
+  assert.ok(pg.nodes.filter(n => !n.context).every(n => n.broken || n.errors || n.warnings));
+  assert.ok(pg.nodes.some(n => n.broken), 'broken references are kept');
+
   await vscode.commands.executeCommand('workbench.view.extension.azure-templates-navigator');
   await sleep(1500);
   console.log('E2E OK');

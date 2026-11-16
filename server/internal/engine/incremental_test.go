@@ -16,14 +16,18 @@ type indexState struct {
 	Forward map[string][]string
 	Reverse map[string][]string
 	Aliases map[string]string
+	Graph   Graph
+	Stats   []StatSection
 }
 
 func stateOf(e *Engine) indexState {
 	diags := e.DiagnoseAll()
+	graph := e.BuildGraph(GraphRequest{})
+	stats := e.Stats()
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.ensureLinked()
-	st := indexState{Diags: map[string][]Diagnostic{}, Forward: map[string][]string{}, Reverse: map[string][]string{}, Aliases: map[string]string{}}
+	st := indexState{Diags: map[string][]Diagnostic{}, Forward: map[string][]string{}, Reverse: map[string][]string{}, Aliases: map[string]string{}, Graph: graph, Stats: stats}
 	for p, ds := range diags {
 		if len(ds) > 0 {
 			st.Diags[p] = ds

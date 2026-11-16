@@ -53,6 +53,9 @@ interface AtnLanguageServer : LanguageServer {
     @JsonRequest("atn/references")
     fun references(params: JsonObject): CompletableFuture<JsonElement?>
 
+    @JsonRequest("atn/stats")
+    fun stats(params: JsonObject): CompletableFuture<JsonElement?>
+
     @JsonRequest("atn/info")
     fun info(params: JsonObject): CompletableFuture<JsonElement?>
 }

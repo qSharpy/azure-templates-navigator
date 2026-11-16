@@ -1,7 +1,7 @@
 'use strict';
 
 // Tree views. They render view models produced by the language server
-// (atn/dependencyTree, atn/workspaceDiagnostics, atn/repositories), so labels,
+// (atn/dependencyTree, atn/workspaceDiagnostics, atn/repositories, atn/stats), so labels,
 // descriptions and tooltips are identical to the IntelliJ plugin.
 
 const vscode = require('vscode');
@@ -163,6 +163,49 @@ class RepositoriesTreeProvider extends Base {
   }
 }
 
+// ── Stats ─────────────────────────────────────────────────────────────────
+const STAT_ICON = {
+  pipeline: 'rocket', template: 'file-code', external: 'repo', missing: 'error',
+  repo: 'repo', error: 'error', warning: 'warning', info: 'info',
+};
+
+class StatsTreeProvider extends Base {
+  async getChildren(element) {
+    if (element) return element.rows.map(row => ({ row }));
+    this.sections = (await this.request('atn/stats')) || [];
+    return this.sections.map((s, i) => ({ section: s, rows: s.rows || [], index: i }));
+  }
+
+  getTreeItem(el) {
+    if (el.section) {
+      const s = el.section;
+      const state = !el.rows.length ? vscode.TreeItemCollapsibleState.None
+        : el.index < 3 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed;
+      const item = new vscode.TreeItem(s.label, state);
+      item.id = `stats:${s.id}`;
+      item.description = s.description;
+      item.tooltip = s.tooltip;
+      item.contextValue = 'stat-section';
+      return item;
+    }
+    const r = el.row;
+    const item = new vscode.TreeItem(r.label, vscode.TreeItemCollapsibleState.None);
+    item.description = r.description;
+    item.tooltip = r.tooltip;
+    const id = STAT_ICON[r.kind] || 'circle-small';
+    const color = r.kind === 'error' || r.kind === 'missing' || r.severity === 1 ? 'list.errorForeground'
+      : r.kind === 'warning' || r.severity === 2 ? 'list.warningForeground' : undefined;
+    item.iconPath = color ? new vscode.ThemeIcon(id, new vscode.ThemeColor(color)) : new vscode.ThemeIcon(id);
+    item.contextValue = r.focus ? `stat-${r.focus}` : 'stat';
+    if (r.filePath) {
+      item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: r.filePath }] };
+    } else if (r.focus) {
+      item.command = { command: 'azure-templates-navigator.showInGraph', title: 'Show in Graph', arguments: [el] };
+    }
+    return item;
+  }
+}
+
 /** "Help and Feedback": always-visible links to report a bug, read the docs, open the log, suggest a feature or leave a review. */
 class FeedbackTreeProvider {
   getChildren() {
@@ -185,4 +228,4 @@ class FeedbackTreeProvider {
   }
 }
 
-module.exports = { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider, FeedbackTreeProvider };
+module.exports = { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider, StatsTreeProvider, FeedbackTreeProvider };

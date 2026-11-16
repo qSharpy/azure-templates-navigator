@@ -150,6 +150,23 @@ func TestLSPRoundTrip(t *testing.T) {
 	if len(graph.Nodes) != 2 || len(graph.Edges) != 1 {
 		t.Errorf("graph: %+v", graph)
 	}
+	var filtered struct {
+		Nodes      []struct{ ID string }
+		TotalNodes int
+		Facets     struct{ Kinds map[string]int }
+	}
+	cl.call("atn/graph", map[string]interface{}{"kinds": []string{"pipeline"}}, &filtered)
+	if len(filtered.Nodes) != 1 || filtered.TotalNodes != 2 || filtered.Facets.Kinds["pipeline"] != 1 {
+		t.Errorf("filtered graph: %+v", filtered)
+	}
+	var stats []struct {
+		ID   string
+		Rows []struct{ Label string }
+	}
+	cl.call("atn/stats", nil, &stats)
+	if len(stats) == 0 || stats[0].ID != "overview" || len(stats[0].Rows) == 0 {
+		t.Errorf("stats: %+v", stats)
+	}
 	var wd []struct{ RelativePath string }
 	cl.call("atn/workspaceDiagnostics", nil, &wd)
 	if len(wd) != 1 || wd[0].RelativePath != "p.yml" {

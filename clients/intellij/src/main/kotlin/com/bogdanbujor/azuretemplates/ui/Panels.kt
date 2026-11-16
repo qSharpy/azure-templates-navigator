@@ -1,7 +1,7 @@
 package com.bogdanbujor.azuretemplates.ui
 
 // Tool window tabs. Each tab renders view models computed by the server
-// (atn/dependencyTree, atn/workspaceDiagnostics, atn/repositories), so the
+// (atn/dependencyTree, atn/workspaceDiagnostics, atn/repositories, atn/stats), so the
 // content is identical to the VS Code views.
 
 import com.bogdanbujor.azuretemplates.AtnService
@@ -61,6 +61,7 @@ class AtnToolWindowFactory : ToolWindowFactory {
         add("Graph", GraphPanel(project))
         add("Diagnostics", DiagnosticsPanel(project))
         add("Repositories", RepositoriesPanel(project))
+        add("Stats", StatsPanel(project))
         // A bug button in the tool window header, visible on every tab.
         toolWindow.setTitleActions(listOfNotNull(ActionManager.getInstance().getAction("AzureTemplatesNavigator.ReportIssue")))
     }
@@ -326,3 +327,59 @@ class RepositoriesPanel(project: Project) : ServerTreePanel(project) {
     }
 }
 
+
+// ── Stats ─────────────────────────────────────────────────────────────────
+class StatsPanel(project: Project) : ServerTreePanel(project) {
+    init {
+        toolbar(
+            action("Refresh", AllIcons.Actions.Refresh) { service.execute("atn.refresh"); reload() },
+            action("Expand All", AllIcons.Actions.Expandall) { TreeUtil.expandAll(tree) },
+            action("Collapse All", AllIcons.Actions.Collapseall) { TreeUtil.collapseAll(tree, 1) },
+        )
+        contextMenu(
+            action("Open", AllIcons.Actions.EditSource) { selectedItem()?.data?.str("filePath")?.takeIf { it.isNotEmpty() }?.let { service.openFile(it) } },
+            action("Show in Graph", AllIcons.Graph.Layout) { selectedItem()?.data?.let { showInGraph(it) } },
+        )
+        reload()
+    }
+
+    override fun load() = service.stats()
+
+    private fun showInGraph(row: JsonObject) {
+        when (row.str("focus")) {
+            "file" -> GraphPanel.show(project) { it.focusFile(row.str("filePath")) }
+            "repo" -> GraphPanel.show(project) { it.showFiltered(repo = row.str("repo")) }
+            "problems" -> GraphPanel.show(project) { it.showFiltered(problems = true) }
+        }
+    }
+
+    private fun icon(r: JsonObject): Icon = when (r.str("kind")) {
+        "error", "missing" -> AllIcons.General.Error
+        "warning" -> AllIcons.General.Warning
+        "pipeline" -> AllIcons.Actions.Execute
+        "external", "repo" -> if (r.int("severity") == 1) AllIcons.General.Error else AllIcons.Nodes.Module
+        else -> if (r.int("severity") == 1) AllIcons.General.Error else if (r.int("severity") == 2) AllIcons.General.Warning else AllIcons.FileTypes.Yaml
+    }
+
+    override fun build(root: DefaultMutableTreeNode, json: JsonElement?) {
+        val sections = json.arr().mapNotNull { it.obj() }
+        if (sections.isEmpty()) {
+            root.add(DefaultMutableTreeNode(Item("No statistics yet")))
+            return
+        }
+        for (s in sections) {
+            val node = DefaultMutableTreeNode(Item(s.str("label"), s.str("description"), null, s.str("tooltip").ifEmpty { null }))
+            for (r in s.list("rows")) {
+                val open: (() -> Unit)? = when {
+                    r.str("filePath").isNotEmpty() -> { { service.openFile(r.str("filePath")) } }
+                    r.str("focus").isNotEmpty() -> { { showInGraph(r) } }
+                    else -> null
+                }
+                node.add(DefaultMutableTreeNode(Item(r.str("label"), r.str("description"), icon(r),
+                    r.str("tooltip").ifEmpty { null }?.let { "<html>" + com.intellij.openapi.util.text.StringUtil.escapeXmlEntities(it).replace("\n", "<br>") + "</html>" },
+                    data = r, open = open)))
+            }
+            root.add(node)
+        }
+    }
+}

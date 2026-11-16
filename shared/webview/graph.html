@@ -190,6 +190,82 @@
       user-select: none;
     }
 
+    /* ── Toolbar row 2: filters ──────────────────────────────────────────── */
+    #filterbar {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 3px 8px;
+      background: var(--vscode-sideBar-background);
+      border-bottom: 1px solid var(--vscode-panel-border);
+      flex-shrink: 0;
+      position: relative;
+      font-size: 11px;
+    }
+    #filterbar button, #direction {
+      background: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 1px 8px;
+      cursor: pointer;
+      font-size: 11px;
+      font-family: inherit;
+      white-space: nowrap;
+    }
+    #filterbar button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    #filterbar button.off { opacity: 0.45; text-decoration: line-through; }
+    #filterbar button.active {
+      background: var(--vscode-button-background);
+      color: var(--vscode-button-foreground);
+    }
+    #filterbar .chip-dot {
+      display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: middle;
+    }
+    #filterbar .sep { width: 1px; align-self: stretch; background: var(--vscode-panel-border); margin: 0 2px; }
+    #direction { border-radius: 3px; padding: 1px 4px; margin-left: 4px; }
+    #repo-menu {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 8px;
+      z-index: 400;
+      min-width: 200px;
+      max-height: 260px;
+      overflow-y: auto;
+      background: var(--vscode-menu-background, var(--vscode-editorWidget-background));
+      border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border));
+      border-radius: 4px;
+      padding: 4px 0;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    }
+    #repo-menu.open { display: block; }
+    #repo-menu label {
+      display: flex; align-items: center; gap: 6px;
+      padding: 3px 10px; cursor: pointer; white-space: nowrap;
+      color: var(--vscode-menu-foreground, var(--vscode-editor-foreground));
+    }
+    #repo-menu label:hover { background: var(--vscode-list-hoverBackground); }
+    #repo-menu .count { margin-left: auto; color: var(--vscode-descriptionForeground); padding-left: 12px; }
+
+    /* Node / edge counts */
+    #counts {
+      position: absolute;
+      left: 8px;
+      bottom: 8px;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: var(--vscode-sideBar-background);
+      border: 1px solid var(--vscode-panel-border);
+      color: var(--vscode-descriptionForeground);
+      opacity: 0.9;
+      user-select: none;
+      pointer-events: none;
+    }
+    #counts:empty { display: none; }
+
     #graph-container {
       flex: 1;
       position: relative;
@@ -244,7 +320,8 @@
 
     /* Native-chrome hosts (IntelliJ) provide the toolbar and search. */
     body.native-chrome #search-bar,
-    body.native-chrome #toolbar { display: none; }
+    body.native-chrome #toolbar,
+    body.native-chrome #filterbar { display: none; }
 
     /* Legend */
     #legend {
@@ -316,19 +393,36 @@
       <button id="btn-depth-dec" title="Decrease depth">−</button>
       <span id="depth-value">1</span>
       <button id="btn-depth-inc" title="Increase depth">+</button>
+      <select id="direction" title="Which side of the current file to draw">
+        <option value="both">Callers and callees</option>
+        <option value="callers">Callers only</option>
+        <option value="callees">Callees only</option>
+      </select>
     </div>
     <div id="toolbar-spacer"></div>
     <button id="btn-full-path"  title="Toggle between filename and full workspace-relative path labels">⊞ Full Path</button>
   </div>
 
+  <!-- Filters: problems · kinds · repositories (counts come from the server) -->
+  <div id="filterbar">
+    <button id="flt-problems" title="Only files with errors or warnings, and broken references (missing templates, unknown aliases, unavailable repositories). Their callers are shown faded.">⚠ Problems</button>
+    <div class="sep"></div>
+    <button class="flt-kind" data-kind="pipeline" title="Show pipelines"><span class="chip-dot" style="background:#4e9de0"></span>Pipelines</button>
+    <button class="flt-kind" data-kind="template" title="Show templates in this workspace"><span class="chip-dot" style="background:#3dba8a"></span>Templates</button>
+    <button class="flt-kind" data-kind="external" title="Show templates from other repositories"><span class="chip-dot" style="background:#9b6fd4"></span>External</button>
+    <button class="flt-kind" data-kind="broken" title="Show missing templates, unknown aliases and unavailable repositories"><span class="chip-dot" style="background:#e05c5c"></span>Broken</button>
+    <button id="flt-repos" title="Show only some repositories. Their callers are shown faded.">Repositories ▾</button>
+    <div id="repo-menu"></div>
+  </div>
+
   <div id="graph-container">
     <svg id="svg">
       <defs>
-        <marker id="arrow" viewBox="0 -4 10 8" refX="20" refY="0"
+        <marker id="arrow" viewBox="0 -4 10 8" refX="10" refY="0"
                 markerWidth="6" markerHeight="6" orient="auto">
           <path d="M0,-4L10,0L0,4" fill="#888" />
         </marker>
-        <marker id="arrow-upstream" viewBox="0 -4 10 8" refX="20" refY="0"
+        <marker id="arrow-upstream" viewBox="0 -4 10 8" refX="10" refY="0"
                 markerWidth="6" markerHeight="6" orient="auto">
           <path d="M0,-4L10,0L0,4" fill="#e09a3d" />
         </marker>
@@ -351,6 +445,8 @@
       <div>Open a folder containing Azure Pipeline YAML files.</div>
     </div>
 
+    <div id="counts"></div>
+
     <div id="legend">
       <div id="legend-toggle" title="Toggle legend">
         <span id="legend-arrow">▶</span> Legend
@@ -364,6 +460,11 @@
         <div style="margin-top:5px;border-top:1px solid var(--vscode-panel-border);padding-top:5px">
           <div class="legend-item"><div style="width:18px;height:2px;background:#4e9de0;flex-shrink:0"></div>↓ downstream</div>
           <div class="legend-item"><div style="width:18px;height:2px;background:#e09a3d;flex-shrink:0;border-top:2px dashed #e09a3d;margin-top:-2px"></div>↑ upstream</div>
+        </div>
+        <div style="margin-top:5px;border-top:1px solid var(--vscode-panel-border);padding-top:5px">
+          <div class="legend-item"><svg width="18" height="12" style="flex-shrink:0"><circle cx="4" cy="6" r="3" fill="#888"/><circle cx="13" cy="6" r="5" fill="#888"/></svg>Size: callers + callees, whole workspace</div>
+          <div class="legend-item"><svg width="18" height="12" style="flex-shrink:0"><circle cx="9" cy="6" r="4" fill="#e05c5c"/></svg>Badge: errors (red) or warnings (amber)</div>
+          <div class="legend-item"><svg width="18" height="12" style="flex-shrink:0"><circle cx="9" cy="6" r="5" fill="#888" opacity="0.4"/></svg>Faded: caller shown for context</div>
         </div>
       </div>
     </div>

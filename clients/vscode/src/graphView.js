@@ -15,12 +15,35 @@ class GraphViewProvider {
     this.webviews = new Set();
     this.fileScope = true;
     this.depth = 1;
+    this.direction = 'both';
+    this.filter = { problemsOnly: false, kinds: [], repos: [] };
     this.activeUri = undefined;
+    this.focusUri = undefined; // "Focus graph here": overrides the active editor until it changes
+  }
+
+  /** Scope the graph to a file (from the node menu or the Stats view). */
+  focusFile(filePath) {
+    this.fileScope = true;
+    this.focusUri = vscode.Uri.file(filePath);
+    this.refresh();
+  }
+
+  /** Workspace graph with a filter (from the Stats view). */
+  showFiltered(filter) {
+    this.fileScope = false;
+    this.filter = Object.assign({ problemsOnly: false, kinds: [], repos: [] }, filter);
+    this.refresh();
+  }
+
+  /** The last graphData sent, for tests. */
+  get lastGraph() {
+    return this._last;
   }
 
   setFile(uri) {
     const changed = !this.activeUri || this.activeUri.toString() !== uri.toString();
     this.activeUri = uri;
+    if (changed) this.focusUri = undefined;
     if (changed && this.fileScope) this.refresh();
   }
 
@@ -69,6 +92,17 @@ class GraphViewProvider {
         this.depth = Math.max(1, Math.min(10, Number(msg.depth) || 1));
         this.refresh();
         break;
+      case 'setDirection':
+        this.direction = ['callers', 'callees'].includes(msg.direction) ? msg.direction : 'both';
+        this.refresh();
+        break;
+      case 'setFilter':
+        this.filter = Object.assign({ problemsOnly: false, kinds: [], repos: [] }, msg.filter);
+        this.refresh();
+        break;
+      case 'focusFile':
+        if (msg.filePath) this.focusFile(msg.filePath);
+        break;
       case 'openFile':
       case 'openFileBeside':
         vscode.commands.executeCommand('azure-templates-navigator.openTemplate', { filePath: msg.filePath, beside: msg.type === 'openFileBeside' });
@@ -89,17 +123,25 @@ class GraphViewProvider {
       webview.postMessage({ type: 'noWorkspace' });
       return;
     }
-    const scoped = this.fileScope && this.activeUri;
-    const data = await this.request('atn/graph', scoped ? { uri: this.activeUri.toString(), depth: this.depth } : {});
+    const focus = this.fileScope ? (this.focusUri || this.activeUri) : undefined;
+    const params = Object.assign({}, this.filter, focus ? { uri: focus.toString(), depth: this.depth, direction: this.direction } : {});
+    const data = await this.request('atn/graph', params);
     if (!data) return;
-    webview.postMessage({
+    const msg = {
       type: 'graphData',
       nodes: data.nodes,
       edges: data.edges,
+      totalNodes: data.totalNodes,
+      totalEdges: data.totalEdges,
+      facets: data.facets,
+      filter: this.filter,
+      direction: this.direction,
       fileScopeEnabled: this.fileScope,
-      scopedFile: scoped ? this.activeUri.fsPath : null,
+      scopedFile: focus ? focus.fsPath : null,
       graphDepth: this.depth,
-    });
+    };
+    this._last = msg;
+    webview.postMessage(msg);
   }
 
   async sendSearch(webview) {

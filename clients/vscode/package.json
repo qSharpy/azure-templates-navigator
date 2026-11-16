@@ -183,6 +183,12 @@
         "icon": "$(screen-full)"
       },
       {
+        "command": "azure-templates-navigator.showInGraph",
+        "title": "Show in Graph",
+        "category": "Azure Templates",
+        "icon": "$(type-hierarchy)"
+      },
+      {
         "command": "azure-templates-navigator.fetchRepository",
         "title": "Fetch Repository",
         "category": "Azure Templates",
@@ -266,6 +272,11 @@
           "icon": "$(repo)"
         },
         {
+          "id": "azure-templates-navigator.statsView",
+          "name": "Stats",
+          "icon": "$(graph)"
+        },
+        {
           "id": "azure-templates-navigator.feedbackView",
           "name": "Help and Feedback",
           "icon": "$(feedback)"
@@ -316,6 +327,11 @@
           "group": "navigation@9"
         },
         {
+          "command": "azure-templates-navigator.refresh",
+          "when": "view == azure-templates-navigator.statsView",
+          "group": "navigation@9"
+        },
+        {
           "command": "azure-templates-navigator.reportIssue",
           "when": "view =~ /^azure-templates-navigator\\.(templateTree|diagnosticsPanel)$/",
           "group": "navigation@8"
@@ -361,6 +377,31 @@
           "command": "azure-templates-navigator.fetchRepository",
           "when": "view == azure-templates-navigator.templateTree && viewItem =~ /^repoUnavailable/",
           "group": "inline@1"
+        },
+        {
+          "command": "azure-templates-navigator.showInGraph",
+          "when": "view == azure-templates-navigator.statsView && viewItem =~ /^stat-/",
+          "group": "inline@1"
+        },
+        {
+          "command": "azure-templates-navigator.showInGraph",
+          "when": "view == azure-templates-navigator.statsView && viewItem =~ /^stat-/",
+          "group": "navigation@1"
+        },
+        {
+          "command": "azure-templates-navigator.openTemplateBeside",
+          "when": "view == azure-templates-navigator.statsView && viewItem == stat-file",
+          "group": "navigation@2"
+        },
+        {
+          "command": "azure-templates-navigator.copyTemplatePath",
+          "when": "view == azure-templates-navigator.statsView && viewItem == stat-file",
+          "group": "navigation@3"
+        },
+        {
+          "command": "azure-templates-navigator.showInGraph",
+          "when": "view == azure-templates-navigator.templateTree && viewItem =~ /^file/",
+          "group": "navigation@4"
         }
       ],
       "commandPalette": [
@@ -386,6 +427,10 @@
         },
         {
           "command": "azure-templates-navigator.showUsages",
+          "when": "false"
+        },
+        {
+          "command": "azure-templates-navigator.showInGraph",
           "when": "false"
         }
       ]

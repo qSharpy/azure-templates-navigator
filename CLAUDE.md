@@ -21,21 +21,24 @@ If you find yourself writing YAML parsing or template logic in JS or Kotlin, sto
 - **`server/internal/engine`**: the index (file cache, overlay of open docs, forward/reverse edges, alias registry), `resolve.go`, `diagnostics.go`, `actions.go`, `features.go` (hover/definition/completion) and `views.go` (tree/graph/lists). One mutex: public methods lock it, lower-case helpers assume it is held.
 - **`server/internal/lsp`**: JSON-RPC framing and the LSP methods. It converts between UTF-16 positions and byte columns.
   - Standard methods beyond hover/definition/completion/codeAction: `documentSymbol` (outline: `pipeline/outline.go`), `references`, `codeLens` ("N usages" above a template), `prepareCallHierarchy` + `callHierarchy/incomingCalls|outgoingCalls`. Logic is in `engine/navigation.go`; `lsp/navigation.go` only converts.
-  - Custom requests: `atn/dependencyTree`, `atn/graph`, `atn/workspaceDiagnostics`, `atn/templates`, `atn/parameters`, `atn/repositories`, `atn/references` (usages with labels, for client-drawn popups), `atn/info`.
+  - Custom requests: `atn/dependencyTree`, `atn/graph`, `atn/workspaceDiagnostics`, `atn/templates`, `atn/parameters`, `atn/repositories`, `atn/references` (usages with labels, for client-drawn popups), `atn/stats` (Stats view sections), `atn/info`.
+  - `atn/graph` takes `uri`/`depth`/`direction` (file scope) and the filters `problemsOnly`, `kinds`, `repos` (empty = all). It returns nodes with workspace-wide `callers`/`usages`/`pipelines`/`callees`/`weight` (node size) and a `tooltip`, plus `totalNodes`, `totalEdges` and `facets`. Filtering and counting live in `engine/insights.go`, not in the webview.
   - Notification: `atn/didChange`.
   - Commands: `atn.fetchRepository`, `atn.fetchAllRepositories`, `atn.refresh`.
 - **`server/cmd/atn`**: the CLI (`lsp`, `check`, `fetch`, `repos`, `version`).
 - **`shared/webview`**: the graph page.
   - `graph.html` has `{{HEAD}}` and `{{SCRIPTS}}` placeholders, filled by each host.
   - `graph.js` talks to `window.atnHost || acquireVsCodeApi()`.
-  - Message types: ready, setFileScope, setDepth, openFile, openFileBeside, copyPath, expand, contextMenu → graphData, searchData, fit, setFullPath.
-  - `window.atnHost.nativeChrome = true` (IntelliJ) hides the page's own search bar and toolbar, and sends `contextMenu` instead of drawing a menu. The host provides those natively.
+  - Message types: ready, setFileScope, setDepth, setDirection, setFilter, focusFile, openFile, openFileBeside, copyPath, expand, contextMenu → graphData, searchData, fit, setFullPath.
+  - The host owns the filter state and echoes it in `graphData` with the totals and facets. The page's filter bar only sends `setFilter`.
+  - `window.atnHost.nativeChrome = true` (IntelliJ) hides the page's own search bar, toolbar and filter bar, and sends `contextMenu` instead of drawing a menu. The host provides those natively. The counts overlay and legend stay in the page.
 - **`clients/vscode`**: plain JS with `vscode-languageclient`.
-  - `extension.js`: client and commands. `src/views.js`: tree providers. `src/graphView.js`: the webview.
+  - `extension.js`: client and commands. `src/views.js`: tree providers (including Stats). `src/graphView.js`: the webview.
+  - `activate()` returns `{ request, graph, stats }` for the E2E test.
   - `src/issue.js`: the pre-filled GitHub issue URL behind `reportIssue`. The *Help and Feedback* view (`FeedbackTreeProvider`) and a bug button on the view titles run it; `giveFeedback` opens the Marketplace reviews.
   - `scripts/copy-assets.js` copies `shared/webview` → `media/` and `dist/bin` → `bin/`. Both are generated, so don't edit them.
 - **`clients/intellij`**: Kotlin with LSP4IJ.
-  - `lsp/AtnLsp.kt`: factory, connection, client and binary lookup. `AtnService.kt`: requests and the change topic. `settings/`, `ui/` (tool window tabs, JCEF graph, actions).
+  - `lsp/AtnLsp.kt`: factory, connection, client and binary lookup. `AtnService.kt`: requests and the change topic. `settings/`, `ui/` (tool window tabs incl. Stats, JCEF graph with native filter actions, actions).
   - `ui/Navigation.kt`: the native pieces (usages popup, `ShowUsagesAction`, gutter icons on `template:`, Structure view routing).
   - The look should be IntelliJ's, not a reskin of VS Code. Prefer an IntelliJ surface fed by an LSP feature (Find Usages, Call Hierarchy, Structure, Code Vision) over a custom panel. LSP4IJ registers some providers only for TEXT/TextMate, so `plugin.xml` registers them for `yaml`.
   - Code lens commands are `<commandPrefix>showUsages`. LSP4IJ runs the IntelliJ action with that id, `AzureTemplatesNavigator.showUsages`, and passes the arguments in `CommandExecutor.LSP_COMMAND`. VS Code registers `azure-templates-navigator.showUsages`.

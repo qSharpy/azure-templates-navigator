@@ -262,6 +262,18 @@ type GraphNode struct {
 	ParamCount    int    `json:"paramCount"`
 	RequiredCount int    `json:"requiredCount"`
 	IsScope       bool   `json:"isScope,omitempty"`
+
+	// Workspace-wide usage (see insights.go), whatever part of the graph is drawn.
+	Callers   int    `json:"callers"`   // distinct files referencing this node
+	Usages    int    `json:"usages"`    // call sites, as in the "N usages" code lens
+	Pipelines int    `json:"pipelines"` // pipelines that reach it
+	Callees   int    `json:"callees"`   // distinct templates it references
+	Weight    int    `json:"weight"`    // drives the node size: callers + callees
+	Errors    int    `json:"errors"`
+	Warnings  int    `json:"warnings"`
+	Broken    string `json:"broken,omitempty"`  // missing|unknownAlias|repoUnavailable
+	Context   bool   `json:"context,omitempty"` // kept only as a caller of a filtered node
+	Tooltip   string `json:"tooltip,omitempty"`
 }
 
 type GraphEdge struct {
@@ -272,15 +284,36 @@ type GraphEdge struct {
 }
 
 type Graph struct {
-	Nodes []GraphNode `json:"nodes"`
-	Edges []GraphEdge `json:"edges"`
+	Nodes      []GraphNode `json:"nodes"`
+	Edges      []GraphEdge `json:"edges"`
+	TotalNodes int         `json:"totalNodes"` // before filtering
+	TotalEdges int         `json:"totalEdges"`
+	Facets     GraphFacets `json:"facets"`
 }
 
-// GraphRequest selects workspace-wide or file-scoped graphs.
+// GraphFacets counts the unfiltered graph by each filter's values.
+type GraphFacets struct {
+	Kinds    map[string]int `json:"kinds"` // pipeline|template|external|broken
+	Problems int            `json:"problems"`
+	Repos    []GraphFacet   `json:"repos"` // key "" is this workspace
+}
+
+type GraphFacet struct {
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Count int    `json:"count"`
+}
+
+// GraphRequest selects workspace-wide or file-scoped graphs and filters them.
 type GraphRequest struct {
-	File     string `json:"file"`     // when set: file-scoped graph
-	Depth    int    `json:"depth"`    // BFS depth for file scope (1-10)
-	RootPath string `json:"rootPath"` // sub-folder for workspace graph
+	File      string `json:"file"`      // when set: file-scoped graph
+	Depth     int    `json:"depth"`     // BFS depth for file scope (1-10)
+	Direction string `json:"direction"` // file scope: both (default) | callers | callees
+	RootPath  string `json:"rootPath"`  // sub-folder for workspace graph
+
+	ProblemsOnly bool     `json:"problemsOnly"` // files with errors/warnings and broken targets
+	Kinds        []string `json:"kinds"`        // pipeline|template|external|broken; empty = all
+	Repos        []string `json:"repos"`        // facet keys ("" = this workspace); empty = all
 }
 
 type graphBuilder struct {
@@ -328,22 +361,20 @@ func (g *graphBuilder) edge(src, dst, label, dir string) {
 // target returns the node id for an edge target, creating the node.
 func (g *graphBuilder) target(ed edge) (string, bool) {
 	res := ed.res
+	id := targetID(ed)
 	switch {
-	case res.Kind == KindDynamic:
+	case id == "":
 		return "", false
 	case res.Kind == KindUnknownAlias:
-		id := "UNKNOWN_ALIAS:" + res.Alias + ":" + ed.ref.Ref
-		g.node(GraphNode{ID: id, Label: filepath.Base(ed.ref.Path()), Kind: "unknown", Alias: res.Alias})
+		g.node(GraphNode{ID: id, Label: filepath.Base(ed.ref.Path()), Kind: "unknown", Alias: res.Alias, Broken: "unknownAlias"})
 		return id, false
 	case res.Kind == KindRepoUnavailable:
-		id := "REPO:" + res.Alias + ":" + ed.ref.Ref
-		g.node(GraphNode{ID: id, Label: filepath.Base(ed.ref.Path()), Kind: "missing", Alias: res.Alias, RepoName: res.Repo.Name,
+		g.node(GraphNode{ID: id, Label: filepath.Base(ed.ref.Path()), Kind: "missing", Alias: res.Alias, RepoName: res.Repo.Name, Broken: "repoUnavailable",
 			RelativePath: fmt.Sprintf("%s (repository %s)", ed.ref.Path(), res.RepoLoc.State)})
 		return id, false
 	case !res.Exists:
-		id := "MISSING:" + res.Path
-		n := GraphNode{ID: id, Label: filepath.Base(res.Path), Kind: "missing", FilePath: res.Path, RelativePath: g.e.relPath(res.Path)}
-		if res.Repo != nil {
+		n := GraphNode{ID: id, Label: filepath.Base(res.Path), Kind: "missing", FilePath: res.Path, RelativePath: g.e.relPath(res.Path), Broken: "missing"}
+		if res.Repo != nil && res.Kind != KindLocal {
 			n.RepoName = res.Repo.Name
 		}
 		g.node(n)
@@ -371,7 +402,6 @@ func (e *Engine) BuildGraph(req GraphRequest) Graph {
 	g := &graphBuilder{e: e, nodes: map[string]*GraphNode{}, seen: map[string]bool{}}
 
 	if req.File == "" {
-		scope := ""
 		rp := strings.Trim(strings.TrimSpace(req.RootPath), `/\`)
 		for _, p := range e.workspaceFiles() {
 			if rp != "" {
@@ -380,7 +410,6 @@ func (e *Engine) BuildGraph(req GraphRequest) Graph {
 					continue
 				}
 			}
-			_ = scope
 			g.fileNode(p)
 			for _, ed := range e.forward[p] {
 				if id, _ := g.target(ed); id != "" {
@@ -388,7 +417,7 @@ func (e *Engine) BuildGraph(req GraphRequest) Graph {
 				}
 			}
 		}
-		return g.result()
+		return g.result(req, "")
 	}
 
 	depth := req.Depth
@@ -405,9 +434,10 @@ func (e *Engine) BuildGraph(req GraphRequest) Graph {
 		p string
 		d int
 	}
+	down, up := req.Direction != "callers", req.Direction != "callees"
 	queue := []item{{root, 0}}
 	visited := map[string]bool{root: true}
-	for len(queue) > 0 {
+	for down && len(queue) > 0 {
 		it := queue[0]
 		queue = queue[1:]
 		if it.d >= depth {
@@ -427,7 +457,7 @@ func (e *Engine) BuildGraph(req GraphRequest) Graph {
 	}
 	queue = []item{{root, 0}}
 	upVisited := map[string]bool{root: true}
-	for len(queue) > 0 {
+	for up && len(queue) > 0 {
 		it := queue[0]
 		queue = queue[1:]
 		if it.d >= depth {
@@ -449,10 +479,11 @@ func (e *Engine) BuildGraph(req GraphRequest) Graph {
 			}
 		}
 	}
-	return g.result()
+	return g.result(req, root)
 }
 
-func (g *graphBuilder) result() Graph {
+func (g *graphBuilder) result(req GraphRequest, focal string) Graph {
+	g.decorate(g.e.degrees(), g.e.problemCounts())
 	out := Graph{Nodes: []GraphNode{}, Edges: g.edges}
 	for _, id := range g.order {
 		out.Nodes = append(out.Nodes, *g.nodes[id])
@@ -460,7 +491,7 @@ func (g *graphBuilder) result() Graph {
 	if out.Edges == nil {
 		out.Edges = []GraphEdge{}
 	}
-	return out
+	return filterGraph(out, req, focal)
 }
 
 // ---------------------------------------------------------------------------

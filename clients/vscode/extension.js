@@ -13,7 +13,7 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 const { LanguageClient, State } = require('vscode-languageclient/node');
-const { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider, FeedbackTreeProvider } = require('./src/views');
+const { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider, StatsTreeProvider, FeedbackTreeProvider } = require('./src/views');
 const { GraphViewProvider } = require('./src/graphView');
 const { issueUrl, REVIEW_URL } = require('./src/issue');
 
@@ -124,6 +124,7 @@ async function activate(context) {
   const tree = new DependencyTreeProvider(request);
   const diagnostics = new DiagnosticsTreeProvider(request);
   const repositories = new RepositoriesTreeProvider(request);
+  const stats = new StatsTreeProvider(request);
   const graph = new GraphViewProvider(context, request);
 
   let pending;
@@ -133,6 +134,7 @@ async function activate(context) {
       tree.refresh();
       diagnostics.refresh();
       repositories.refresh();
+      stats.refresh();
       graph.refresh();
     }, 250);
   };
@@ -140,6 +142,7 @@ async function activate(context) {
   const treeView = vscode.window.createTreeView(`${SECTION}.templateTree`, { treeDataProvider: tree, showCollapseAll: true });
   const diagView = vscode.window.createTreeView(`${SECTION}.diagnosticsPanel`, { treeDataProvider: diagnostics });
   const repoView = vscode.window.createTreeView(`${SECTION}.repositoriesView`, { treeDataProvider: repositories });
+  const statsView = vscode.window.createTreeView(`${SECTION}.statsView`, { treeDataProvider: stats, showCollapseAll: true });
   diagnostics.onCounts = (errors, warnings) => {
     diagView.badge = errors + warnings > 0
       ? { value: errors + warnings, tooltip: `${errors} error(s), ${warnings} warning(s)` }
@@ -147,7 +150,7 @@ async function activate(context) {
   };
   tree.onTitle = title => { treeView.description = title; };
   context.subscriptions.push(vscode.window.registerTreeDataProvider(`${SECTION}.feedbackView`, new FeedbackTreeProvider()));
-  context.subscriptions.push(treeView, diagView, repoView,
+  context.subscriptions.push(treeView, diagView, repoView, statsView,
     vscode.window.registerWebviewViewProvider(`${SECTION}.graphView`, graph, { webviewOptions: { retainContextWhenHidden: true } }));
 
   const onEditor = editor => {
@@ -170,7 +173,7 @@ async function activate(context) {
       editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.InCenter);
     }
   };
-  const nodeArg = a => (a && a.node) || a || {};
+  const nodeArg = a => (a && (a.node || a.row)) || a || {};
 
   const commands = {
     openTemplate: (a = {}) => openFile(a.filePath, { beside: !!a.beside, line: a.line }),
@@ -219,6 +222,16 @@ async function activate(context) {
     },
     refresh: async () => { await execute('atn.refresh'); refreshViews(); },
     expandTemplateGraph: () => graph.openPanel(),
+    // From a Stats row (or a tree node): scope the graph to a file, or filter
+    // the workspace graph by repository or to problems.
+    showInGraph: async a => {
+      const row = nodeArg(a);
+      if (row.focus === 'repo') graph.showFiltered({ repos: [row.repo] });
+      else if (row.focus === 'problems') graph.showFiltered({ problemsOnly: true });
+      else if (row.filePath) graph.focusFile(row.filePath);
+      else return;
+      await vscode.commands.executeCommand(`${SECTION}.graphView.focus`);
+    },
     fetchRepository: async a => {
       const arg = nodeArg(a);
       const alias = arg.alias || (arg.repo && arg.repo.alias);
@@ -312,6 +325,8 @@ async function activate(context) {
   await startClient(context, refreshViews);
   onEditor(vscode.window.activeTextEditor);
   refreshViews();
+  // For the E2E test.
+  return { request, graph, stats };
 }
 
 async function deactivate() {

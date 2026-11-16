@@ -3,6 +3,31 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [Unreleased]
+
+### Added
+
+- **Graph nodes are sized by how connected they are.** Size follows callers + callees, counted over the whole workspace, so a widely used template stays big when the graph shows only the current file. The scale is a square root, so hubs don't swamp the view.
+  - Hovering a node shows how many files and call sites use it, how many pipelines reach it, what it calls, its parameters, and its errors and warnings.
+  - Files with errors or warnings get a red or amber badge.
+- **Node and edge counts** in the corner of the graph: "23 of 87 nodes · 31 of 140 edges" when a filter is on.
+- **Graph filters.**
+  - *Problems*: only files with errors or warnings, and missing templates, unknown aliases or unavailable repositories.
+  - *Kinds*: pipelines, templates, external templates, broken references.
+  - *Repositories*: this workspace and each repository templates come from.
+  - With *Problems* or *Repositories*, the direct callers of what matches stay visible, faded, so you can see who uses it.
+  - Around the current file: callers only, callees only, or both, next to the depth.
+  - VS Code: a filter bar under the graph toolbar, and *Focus graph here* on a node's menu. IntelliJ: *Only Problems*, a *Filter* popup and a direction combo in the Graph tab's toolbar.
+- **Stats view** (VS Code: under Repositories; IntelliJ: a Stats tab), for teams that publish templates:
+  - Overview: pipelines, templates, external templates, repositories, errors, warnings, broken references.
+  - Most used: call sites, files and pipelines reached. These are the templates a parameter change affects most.
+  - Most mis-called: templates whose call sites have the most parameter problems, often a sign of a confusing interface.
+  - Calls the most templates.
+  - Not referenced in this workspace: candidates for clean-up. Templates published for other repositories show up here too.
+  - By repository: templates, call sites and files using each repository.
+  - Click a row to open the file. *Show in Graph* centres the graph on it, filters it to the repository, or shows only problems.
+- `atn/stats` request and new `atn/graph` parameters (`direction`, `problemsOnly`, `kinds`, `repos`). The response adds per-node usage numbers, `totalNodes`, `totalEdges` and `facets`.
+
 ## [2.2.0] — 2026-11-16
 
 ### Added

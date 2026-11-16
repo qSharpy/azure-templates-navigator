@@ -9,8 +9,11 @@
 //             this script runs and delivers replies via window.postMessage.
 // Host → webview messages: graphData | searchData | noWorkspace | error |
 //                          fit | setFullPath
-// Webview → host messages: ready | setFileScope | setDepth | openFile |
-//                          openFileBeside | copyPath | expand | contextMenu
+// Webview → host messages: ready | setFileScope | setDepth | setDirection |
+//                          setFilter | focusFile | openFile | openFileBeside |
+//                          copyPath | expand | contextMenu
+// graphData carries the node/edge totals, the filter facets and the current
+// filter ({problemsOnly, kinds, repos}) and direction, which the host owns.
 // ---------------------------------------------------------------------------
 const vscode = window.atnHost
   || (typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() {} });
@@ -32,6 +35,10 @@ let fileScopeEnabled = true; // mirrors _fileScopeEnabled on the extension side
 let scopedFilePath = null;   // the focal file when in file-scope mode
 let showFullPath = false;    // whether to show workspace-relative paths as node labels
 let graphDepth = 1;          // current BFS depth for file-scope mode (1–10)
+let graphDirection = 'both'; // file scope: both | callers | callees
+/** Filter state, owned by the host and echoed back in graphData. */
+let filter = { problemsOnly: false, kinds: [], repos: [] };
+let facets = { kinds: {}, problems: 0, repos: [] };
 
 /** @type {Array<{filePath:string,filename:string,relativePath:string,directory:string}>} */
 let searchIndex = [];        // all workspace YAML files for the search bar
@@ -47,13 +54,13 @@ const KIND_COLOR = {
   unknown:  '#e09a3d',
 };
 
-const KIND_RADIUS = {
-  pipeline: 18,
-  local:    13,
-  external: 15,
-  missing:  11,
-  unknown:  11,
-};
+// Node size follows the server's `weight` (callers + callees, counted over
+// the whole workspace). sqrt keeps hubs from swamping the view.
+const MIN_RADIUS = 9;
+const MAX_RADIUS = 34;
+function radius(d) {
+  return Math.min(MAX_RADIUS, MIN_RADIUS + 4 * Math.sqrt(d.weight || 0));
+}
 
 const KIND_STROKE = {
   pipeline: '#2a7abf',
@@ -194,6 +201,13 @@ const depthControls  = document.getElementById('depth-controls');
 const depthValue     = document.getElementById('depth-value');
 const btnDepthDec    = document.getElementById('btn-depth-dec');
 const btnDepthInc    = document.getElementById('btn-depth-inc');
+const directionSel   = document.getElementById('direction');
+const countsEl       = document.getElementById('counts');
+const btnProblems    = document.getElementById('flt-problems');
+const btnRepos       = document.getElementById('flt-repos');
+const repoMenu       = document.getElementById('repo-menu');
+const kindButtons    = [...document.querySelectorAll('.flt-kind')];
+const ALL_KINDS      = kindButtons.map(b => b.dataset.kind);
 
 const svg = d3.select(svgEl);
 
@@ -261,6 +275,7 @@ function updateDepthControls() {
     depthControls.classList.remove('visible');
   }
   depthValue.textContent = String(graphDepth);
+  directionSel.value = graphDirection;
   btnDepthDec.disabled = graphDepth <= 1;
   btnDepthInc.disabled = graphDepth >= 10;
 }
@@ -272,12 +287,109 @@ btnDepthDec.addEventListener('click', () => {
   vscode.postMessage({ type: 'setDepth', depth: graphDepth });
 });
 
+directionSel.addEventListener('change', () => {
+  graphDirection = directionSel.value;
+  vscode.postMessage({ type: 'setDirection', direction: graphDirection });
+});
+
 btnDepthInc.addEventListener('click', () => {
   if (graphDepth >= 10) return;
   graphDepth++;
   updateDepthControls();
   vscode.postMessage({ type: 'setDepth', depth: graphDepth });
 });
+
+// ---------------------------------------------------------------------------
+// Filters (in-page controls; IntelliJ draws native ones and hides these)
+// ---------------------------------------------------------------------------
+
+function sendFilter() {
+  vscode.postMessage({ type: 'setFilter', filter });
+}
+
+/** Kinds currently shown; an empty filter list means "all". */
+function shownKinds() {
+  return filter.kinds && filter.kinds.length ? filter.kinds : ALL_KINDS;
+}
+
+btnProblems.addEventListener('click', () => {
+  filter = Object.assign({}, filter, { problemsOnly: !filter.problemsOnly });
+  updateFilterBar();
+  sendFilter();
+});
+
+for (const b of kindButtons) {
+  b.addEventListener('click', () => {
+    const shown = new Set(shownKinds());
+    if (shown.has(b.dataset.kind)) {
+      if (shown.size === 1) return; // keep at least one kind
+      shown.delete(b.dataset.kind);
+    } else {
+      shown.add(b.dataset.kind);
+    }
+    const kinds = ALL_KINDS.filter(k => shown.has(k));
+    filter = Object.assign({}, filter, { kinds: kinds.length === ALL_KINDS.length ? [] : kinds });
+    updateFilterBar();
+    sendFilter();
+  });
+}
+
+btnRepos.addEventListener('click', (e) => {
+  e.stopPropagation();
+  repoMenu.classList.toggle('open');
+});
+repoMenu.addEventListener('click', (e) => e.stopPropagation());
+document.addEventListener('click', () => repoMenu.classList.remove('open'));
+
+function renderRepoMenu() {
+  repoMenu.textContent = '';
+  const all = (facets.repos || []).map(r => r.key);
+  const selected = new Set(filter.repos && filter.repos.length ? filter.repos : all);
+  for (const r of facets.repos || []) {
+    const label = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = selected.has(r.key);
+    cb.addEventListener('change', () => {
+      if (cb.checked) selected.add(r.key); else selected.delete(r.key);
+      if (selected.size === 0) { selected.add(r.key); cb.checked = true; return; }
+      const repos = all.filter(k => selected.has(k));
+      filter = Object.assign({}, filter, { repos: repos.length === all.length ? [] : repos });
+      updateFilterBar();
+      sendFilter();
+    });
+    const name = document.createElement('span');
+    name.textContent = r.label;
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = String(r.count);
+    label.append(cb, name, count);
+    repoMenu.appendChild(label);
+  }
+}
+
+function updateFilterBar() {
+  btnProblems.classList.toggle('active', !!filter.problemsOnly);
+  btnProblems.textContent = `⚠ Problems ${facets.problems || 0}`;
+  const shown = new Set(shownKinds());
+  for (const b of kindButtons) {
+    b.classList.toggle('off', !shown.has(b.dataset.kind));
+    const n = (facets.kinds || {})[b.dataset.kind] || 0;
+    b.lastChild.textContent = `${b.dataset.label || (b.dataset.label = b.lastChild.textContent)} ${n}`;
+  }
+  const repos = facets.repos || [];
+  btnRepos.style.display = repos.length > 1 ? '' : 'none';
+  const picked = filter.repos && filter.repos.length;
+  btnRepos.classList.toggle('active', !!picked);
+  btnRepos.textContent = picked ? `Repositories: ${picked} of ${repos.length} ▾` : 'Repositories ▾';
+  renderRepoMenu();
+}
+
+function updateCounts(shownNodes, shownEdges, totalNodes, totalEdges) {
+  const n = shownNodes === totalNodes ? `${totalNodes} nodes` : `${shownNodes} of ${totalNodes} nodes`;
+  const e = shownEdges === totalEdges ? `${totalEdges} edges` : `${shownEdges} of ${totalEdges} edges`;
+  countsEl.textContent = `${n} · ${e}`;
+}
 
 // ---------------------------------------------------------------------------
 // Full-path toggle button
@@ -319,7 +431,7 @@ function nodeLabel(d) {
  * Updates only the text labels of existing nodes (no simulation restart needed).
  */
 function updateNodeLabels() {
-  d3.select(nodesLayer).selectAll('g.node').select('text:last-of-type')
+  d3.select(nodesLayer).selectAll('g.node').select('text.label')
     .text(d => truncate(nodeLabel(d), showFullPath ? 40 : 24));
 }
 
@@ -342,6 +454,9 @@ function showCtxMenu(event, d) {
   items.forEach(el => el.remove());
 
   if (d.filePath && d.kind !== 'missing' && d.kind !== 'unknown') {
+    addCtxItem('Focus graph here', () => {
+      vscode.postMessage({ type: 'focusFile', filePath: d.filePath });
+    });
     addCtxItem('Open file', () => {
       vscode.postMessage({ type: 'openFile', filePath: d.filePath });
     });
@@ -410,13 +525,20 @@ window.addEventListener('message', (event) => {
       if (typeof msg.graphDepth === 'number' && msg.graphDepth !== graphDepth) {
         graphDepth = msg.graphDepth;
       }
+      if (typeof msg.direction === 'string') graphDirection = msg.direction;
       updateDepthControls();
+
+      if (msg.filter) filter = Object.assign({ problemsOnly: false, kinds: [], repos: [] }, msg.filter);
+      facets = msg.facets || { kinds: {}, problems: 0, repos: [] };
+      updateFilterBar();
 
       // Track the focal file for upstream/downstream colouring
       scopedFilePath = msg.scopedFile || null;
 
-      // Update stats label to show scope context
       renderGraph(msg.nodes, msg.edges, msg.scopedFile);
+      updateCounts((msg.nodes || []).length, (msg.edges || []).length,
+        typeof msg.totalNodes === 'number' ? msg.totalNodes : (msg.nodes || []).length,
+        typeof msg.totalEdges === 'number' ? msg.totalEdges : (msg.edges || []).length);
       break;
     case 'fit':
       fitView();
@@ -561,7 +683,15 @@ function edgeColor(e) {
  */
 function renderGraph(nodes, edges, scopedFile) {
   if (!nodes || nodes.length === 0) {
-    if (fileScopeEnabled) {
+    allNodes = [];
+    allEdges = [];
+    if (simulation) simulation.stop();
+    d3.select(edgesLayer).selectAll('*').remove();
+    d3.select(edgeLabels).selectAll('*').remove();
+    d3.select(nodesLayer).selectAll('*').remove();
+    if (isFiltered()) {
+      showEmpty('No nodes match the filters.');
+    } else if (fileScopeEnabled) {
       showEmpty('Open a YAML pipeline file to scope the graph to it.');
     } else {
       showEmpty();
@@ -615,7 +745,7 @@ function renderGraph(nodes, edges, scopedFile) {
     )
     .force('collide', d3.forceCollide()
       // Account for node circle + label text width (~70px) below the circle
-      .radius(d => (KIND_RADIUS[d.kind] || 13) + 55)
+      .radius(d => radius(d) + 55)
       .strength(1.0)
       .iterations(4)
     )
@@ -673,7 +803,7 @@ function renderGraph(nodes, edges, scopedFile) {
   // Focal-node outer ring (only in file-scope mode for the scoped file)
   nodeGroup.filter(d => scopedFile && d.filePath === scopedFile)
     .append('circle')
-    .attr('r', d => (KIND_RADIUS[d.kind] || 13) + 5)
+    .attr('r', d => radius(d) + 5)
     .attr('fill', 'none')
     .attr('stroke', 'var(--vscode-focusBorder, #007fd4)')
     .attr('stroke-width', 2)
@@ -681,9 +811,15 @@ function renderGraph(nodes, edges, scopedFile) {
     .attr('opacity', 0.8)
     .attr('pointer-events', 'none');
 
+  // Context nodes (callers kept only to show who uses a filtered node) are faded.
+  nodeGroup.style('opacity', d => d.context ? 0.45 : 1);
+
+  // Hover tooltip, written by the server
+  nodeGroup.append('title').text(d => d.tooltip || d.relativePath || d.label);
+
   // Circle
   nodeGroup.append('circle')
-    .attr('r', d => KIND_RADIUS[d.kind] || 13)
+    .attr('r', d => radius(d))
     .attr('fill', d => KIND_COLOR[d.kind] || '#888')
     .attr('stroke', d => KIND_STROKE[d.kind] || '#555')
     .attr('stroke-width', 2)
@@ -693,15 +829,28 @@ function renderGraph(nodes, edges, scopedFile) {
   nodeGroup.append('text')
     .attr('text-anchor', 'middle')
     .attr('dominant-baseline', 'central')
-    .attr('font-size', d => d.kind === 'pipeline' ? 11 : 9)
+    .attr('font-size', d => Math.round(Math.max(9, radius(d) * 0.7)))
     .attr('fill', '#fff')
     .attr('pointer-events', 'none')
     .text(d => kindIcon(d.kind));
 
+  // Problem badge: red for errors, amber for warnings
+  nodeGroup.filter(d => !d.broken && (d.errors > 0 || d.warnings > 0))
+    .append('circle')
+    .attr('class', 'badge')
+    .attr('cx', d => radius(d) * 0.72)
+    .attr('cy', d => -radius(d) * 0.72)
+    .attr('r', 4.5)
+    .attr('fill', d => d.errors > 0 ? '#e05c5c' : '#e0b03d')
+    .attr('stroke', 'var(--vscode-editor-background, #1e1e1e)')
+    .attr('stroke-width', 1.5)
+    .attr('pointer-events', 'none');
+
   // Label below circle
   nodeGroup.append('text')
+    .attr('class', 'label')
     .attr('text-anchor', 'middle')
-    .attr('dy', d => (KIND_RADIUS[d.kind] || 13) + 13)
+    .attr('dy', d => radius(d) + 13)
     .attr('font-size', 10)
     .attr('fill', 'var(--vscode-editor-foreground)')
     .attr('pointer-events', 'none')
@@ -739,12 +888,25 @@ function renderGraph(nodes, edges, scopedFile) {
   });
 
   // ── Tick function ──────────────────────────────────────────────────────────
+  // Edges run between circle rims so arrowheads aren't hidden under big nodes.
+  function rim(d, end) {
+    const dx = d.target.x - d.source.x;
+    const dy = d.target.y - d.source.y;
+    const len = Math.hypot(dx, dy) || 1;
+    if (end) {
+      const r = radius(d.target) + 2;
+      return [d.target.x - (dx / len) * r, d.target.y - (dy / len) * r];
+    }
+    const r = radius(d.source);
+    return [d.source.x + (dx / len) * r, d.source.y + (dy / len) * r];
+  }
+
   function ticked() {
     edgeSel
-      .attr('x1', d => d.source.x)
-      .attr('y1', d => d.source.y)
-      .attr('x2', d => d.target.x)
-      .attr('y2', d => d.target.y);
+      .attr('x1', d => rim(d, false)[0])
+      .attr('y1', d => rim(d, false)[1])
+      .attr('x2', d => rim(d, true)[0])
+      .attr('y2', d => rim(d, true)[1]);
 
     edgeLabelSel
       .attr('x', d => (d.source.x + d.target.x) / 2)
@@ -808,7 +970,7 @@ function resetHighlight(edgeSel, nodeGroup) {
   edgeSel
     .attr('stroke-opacity', e => (e.direction === 'upstream' || e.direction === 'downstream') ? 0.75 : 0.6)
     .attr('stroke-width',   e => (e.direction === 'upstream' || e.direction === 'downstream') ? 2 : 1.5);
-  nodeGroup.style('opacity', 1);
+  nodeGroup.style('opacity', n => n.context ? 0.45 : 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -848,9 +1010,15 @@ function fitView() {
 // ---------------------------------------------------------------------------
 function showEmpty(msg) {
   emptyState.style.display = 'flex';
-  if (msg) {
-    emptyState.querySelector('div:last-child').textContent = msg;
+  const lines = emptyState.querySelectorAll('div:not(.icon)');
+  if (!emptyState.dataset.defaults) {
+    emptyState.dataset.defaults = JSON.stringify([...lines].map(l => l.textContent));
   }
+  const defaults = JSON.parse(emptyState.dataset.defaults);
+  lines.forEach((l, i) => {
+    l.textContent = msg ? (i === 0 ? msg : '') : defaults[i];
+    l.style.display = l.textContent ? '' : 'none';
+  });
 }
 
 function hideEmpty() {
@@ -868,6 +1036,10 @@ function kindIcon(kind) {
     case 'unknown':  return '?';
     default:         return '◆';
   }
+}
+
+function isFiltered() {
+  return !!(filter.problemsOnly || (filter.kinds && filter.kinds.length) || (filter.repos && filter.repos.length));
 }
 
 function truncate(str, max) {

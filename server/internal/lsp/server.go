@@ -268,12 +268,17 @@ func (s *Server) handle(m *message) {
 		}
 	case "atn/graph":
 		var p struct {
-			URI      string `json:"uri"`
-			Depth    int    `json:"depth"`
-			RootPath string `json:"rootPath"`
+			URI          string   `json:"uri"`
+			Depth        int      `json:"depth"`
+			Direction    string   `json:"direction"`
+			RootPath     string   `json:"rootPath"`
+			ProblemsOnly bool     `json:"problemsOnly"`
+			Kinds        []string `json:"kinds"`
+			Repos        []string `json:"repos"`
 		}
 		_ = json.Unmarshal(m.Params, &p)
-		req := engine.GraphRequest{Depth: p.Depth, RootPath: p.RootPath}
+		req := engine.GraphRequest{Depth: p.Depth, Direction: p.Direction, RootPath: p.RootPath,
+			ProblemsOnly: p.ProblemsOnly, Kinds: p.Kinds, Repos: p.Repos}
 		if p.URI != "" {
 			req.File = uriToPath(p.URI)
 		}
@@ -299,6 +304,8 @@ func (s *Server) handle(m *message) {
 		result = map[string]interface{}{"filePath": file, "parameters": list}
 	case "atn/repositories":
 		result = s.eng.Repositories()
+	case "atn/stats":
+		result = s.eng.Stats()
 	case "atn/references":
 		result = s.usageList(m.Params)
 	case "atn/info":

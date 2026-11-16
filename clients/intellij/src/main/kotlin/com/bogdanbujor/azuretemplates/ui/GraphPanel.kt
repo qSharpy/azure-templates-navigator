@@ -2,6 +2,7 @@ package com.bogdanbujor.azuretemplates.ui
 
 import com.bogdanbujor.azuretemplates.AtnService
 import com.bogdanbujor.azuretemplates.arr
+import com.bogdanbujor.azuretemplates.int
 import com.bogdanbujor.azuretemplates.obj
 import com.bogdanbujor.azuretemplates.str
 import com.google.gson.JsonObject
@@ -9,7 +10,9 @@ import com.google.gson.JsonParser
 import com.intellij.icons.AllIcons
 import com.intellij.ide.actions.RevealFileAction
 import com.intellij.ide.ui.LafManagerListener
+import com.intellij.openapi.actionSystem.ActionGroup
 import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataContext
@@ -27,6 +30,7 @@ import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.SimpleToolWindowPanel
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.JBColor
 import com.intellij.ui.awt.RelativePoint
 import com.intellij.ui.components.JBLabel
@@ -56,7 +60,13 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
     private var query: JBCefJSQuery? = null
     private var fileScope = true
     private var depth = 1
+    private var direction = "both"
     private var fullPath = false
+    // Filters; empty sets mean "all". The server filters and returns the facets (counts per kind/repository).
+    private var problemsOnly = false
+    private var hiddenKinds = setOf<String>()
+    private var repos = setOf<String>()
+    @Volatile private var facets: JsonObject? = null
     private var menuTarget: String = ""
     private var activeFile: String? = null
     private var ready = false
@@ -83,6 +93,22 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             ApplicationManager.getApplication().messageBus.connect(this).subscribe(LafManagerListener.TOPIC, LafManagerListener { load() })
             setFile(FileEditorManager.getInstance(project).selectedFiles.firstOrNull()?.path)
         }
+    }
+
+    /** Scope the graph to [path] (Stats tab, node menu). */
+    fun focusFile(path: String) {
+        fileScope = true
+        activeFile = path
+        if (ready) sendGraph()
+    }
+
+    /** Whole-project graph with a filter (Stats tab). */
+    fun showFiltered(problems: Boolean = false, repo: String? = null) {
+        fileScope = false
+        problemsOnly = problems
+        hiddenKinds = emptySet()
+        repos = if (repo != null) setOf(repo) else emptySet()
+        if (ready) sendGraph()
     }
 
     private fun setFile(path: String?) {
@@ -154,19 +180,33 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             "contextMenu" -> ApplicationManager.getApplication().invokeLater { showNodeMenu(msg.str("filePath"), msg.str("kind")) }
             "setFileScope" -> { fileScope = msg.get("enabled")?.asBoolean ?: true; sendGraph() }
             "setDepth" -> { depth = (msg.get("depth")?.asInt ?: 1).coerceIn(1, 10); sendGraph() }
+            "focusFile" -> focusFile(msg.str("filePath"))
             "openFile", "openFileBeside" -> service.openFile(msg.str("filePath"))
             "copyPath" -> CopyPasteManager.getInstance().setContents(StringSelection(msg.str("text")))
         }
     }
 
+    private val allKinds = listOf("pipeline" to "Pipelines", "template" to "Templates", "external" to "External", "broken" to "Broken")
+
     private fun sendGraph() {
         val scoped = if (fileScope) activeFile else null
-        service.graph(scoped, depth).thenAccept { data ->
+        val kinds = if (hiddenKinds.isEmpty()) emptyList() else allKinds.map { it.first }.filter { it !in hiddenKinds }
+        service.graph(scoped, depth, direction, problemsOnly, kinds, repos).thenAccept { data ->
             val g = data.obj() ?: return@thenAccept
+            facets = g.get("facets").obj()
             post(JsonObject().apply {
                 addProperty("type", "graphData")
                 add("nodes", g.get("nodes"))
                 add("edges", g.get("edges"))
+                add("totalNodes", g.get("totalNodes"))
+                add("totalEdges", g.get("totalEdges"))
+                add("facets", g.get("facets"))
+                add("filter", JsonObject().apply {
+                    addProperty("problemsOnly", problemsOnly)
+                    add("kinds", com.google.gson.JsonArray().apply { kinds.forEach { add(it) } })
+                    add("repos", com.google.gson.JsonArray().apply { repos.forEach { add(it) } })
+                })
+                addProperty("direction", direction)
                 addProperty("fileScopeEnabled", fileScope)
                 if (scoped != null) addProperty("scopedFile", scoped)
                 addProperty("graphDepth", depth)
@@ -200,6 +240,20 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                 override fun setSelected(e: AnActionEvent, state: Boolean) { fileScope = state; sendGraph() }
             })
             add(DepthAction())
+            add(DirectionAction())
+            addSeparator()
+            add(object : ToggleAction("Only Problems", "Show only files with errors or warnings and broken references; their callers are shown faded", AllIcons.General.Warning), DumbAware {
+                override fun getActionUpdateThread() = ActionUpdateThread.EDT
+                override fun isSelected(e: AnActionEvent) = problemsOnly
+                override fun update(e: AnActionEvent) {
+                    super.update(e)
+                    val n = facets?.get("problems")?.asInt
+                    e.presentation.text = if (n != null) "Only Problems ($n)" else "Only Problems"
+                }
+                override fun setSelected(e: AnActionEvent, state: Boolean) { problemsOnly = state; sendGraph() }
+            })
+            add(FilterGroup())
+            addSeparator()
             add(object : ToggleAction("Show Full Paths", "Label nodes with project-relative paths instead of file names", AllIcons.Actions.ShowAsTree), DumbAware {
                 override fun getActionUpdateThread() = ActionUpdateThread.EDT
                 override fun isSelected(e: AnActionEvent) = fullPath
@@ -241,6 +295,84 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             }
     }
 
+    /** "Callers and Callees ▾": which side of the current file to draw. */
+    private inner class DirectionAction : ComboBoxAction(), DumbAware {
+        private val choices = listOf("both" to "Callers and Callees", "callers" to "Callers Only", "callees" to "Callees Only")
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+        override fun update(e: AnActionEvent) {
+            e.presentation.text = choices.first { it.first == direction }.second
+            e.presentation.description = "Which side of the current file to draw"
+            e.presentation.isEnabled = fileScope
+        }
+
+        override fun createPopupActionGroup(button: JComponent, dataContext: DataContext): DefaultActionGroup =
+            DefaultActionGroup().apply {
+                for ((key, label) in choices) add(object : DumbAwareAction(label) {
+                    override fun actionPerformed(e: AnActionEvent) { direction = key; sendGraph() }
+                })
+            }
+    }
+
+    /** Filter popup: node kinds and repositories, with counts from the server. */
+    private inner class FilterGroup : ActionGroup("Filter", "Show only some kinds of nodes or repositories", AllIcons.General.Filter), DumbAware {
+        init { isPopup = true }
+        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+        override fun update(e: AnActionEvent) {
+            val active = hiddenKinds.isNotEmpty() || repos.isNotEmpty()
+            // The IDE's usual "something is on" dot, as on run configurations.
+            e.presentation.icon = if (active) com.intellij.execution.runners.ExecutionUtil.getLiveIndicator(AllIcons.General.Filter) else AllIcons.General.Filter
+            e.presentation.text = if (active) "Filter (Active)" else "Filter"
+        }
+
+        override fun getChildren(e: AnActionEvent?): Array<AnAction> {
+            val f = facets
+            val kindCounts = f?.get("kinds").obj()
+            val out = mutableListOf<AnAction>()
+            out += com.intellij.openapi.actionSystem.Separator.create("Kinds")
+            for ((key, label) in allKinds) {
+                val n = kindCounts?.get(key)?.asInt ?: 0
+                out += object : ToggleAction("$label ($n)"), DumbAware {
+                    override fun getActionUpdateThread() = ActionUpdateThread.EDT
+                    override fun isSelected(e: AnActionEvent) = key !in hiddenKinds
+                    override fun setSelected(e: AnActionEvent, state: Boolean) {
+                        val next = if (state) hiddenKinds - key else hiddenKinds + key
+                        if (next.size == allKinds.size) return // keep at least one kind
+                        hiddenKinds = next
+                        sendGraph()
+                    }
+                }
+            }
+            val repoFacets = f?.get("repos").arr().mapNotNull { it.obj() }
+            if (repoFacets.size > 1) {
+                out += com.intellij.openapi.actionSystem.Separator.create("Repositories")
+                val keys = repoFacets.map { it.str("key") }
+                for (r in repoFacets) {
+                    val key = r.str("key")
+                    out += object : ToggleAction("${r.str("label")} (${r.int("count")})"), DumbAware {
+                        override fun getActionUpdateThread() = ActionUpdateThread.EDT
+                        override fun isSelected(e: AnActionEvent) = repos.isEmpty() || key in repos
+                        override fun setSelected(e: AnActionEvent, state: Boolean) {
+                            val shown = if (repos.isEmpty()) keys.toSet() else repos
+                            val next = if (state) shown + key else shown - key
+                            if (next.isEmpty()) return
+                            repos = if (next.containsAll(keys)) emptySet() else next
+                            sendGraph()
+                        }
+                    }
+                }
+            }
+            if (hiddenKinds.isNotEmpty() || repos.isNotEmpty() || problemsOnly) {
+                out += com.intellij.openapi.actionSystem.Separator.create()
+                out += object : DumbAwareAction("Clear Filters") {
+                    override fun actionPerformed(e: AnActionEvent) {
+                        hiddenKinds = emptySet(); repos = emptySet(); problemsOnly = false; sendGraph()
+                    }
+                }
+            }
+            return out.toTypedArray()
+        }
+    }
+
     private fun showNodeMenu(filePath: String, kind: String) {
         if (filePath.isEmpty()) return
         menuTarget = filePath
@@ -279,4 +411,16 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
     }
 
     override fun dispose() {}
+
+    companion object {
+        /** The Graph tab of the Azure Templates tool window, shown and selected. */
+        fun show(project: Project, then: (GraphPanel) -> Unit) {
+            val tw = ToolWindowManager.getInstance(project).getToolWindow("Azure Templates") ?: return
+            tw.show {
+                val content = tw.contentManager.contents.firstOrNull { it.component is GraphPanel } ?: return@show
+                tw.contentManager.setSelectedContent(content)
+                then(content.component as GraphPanel)
+            }
+        }
+    }
 }

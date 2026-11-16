@@ -63,12 +63,27 @@ class AtnService(private val project: Project) : Disposable {
             .exceptionally { e -> LOG.info("atn request failed", e); null }
 
     fun dependencyTree(path: String) = call { it.dependencyTree(JsonObject().apply { addProperty("uri", fileUri(path)) }) }
-    fun graph(path: String?, depth: Int) = call {
+    /**
+     * The template graph: around [path] (callers/callees up to [depth], see [direction]) or the whole project.
+     * Filters: [problemsOnly]; [kinds] (pipeline|template|external|broken) and [repos] (facet keys,
+     * "" = this project) are "all" when empty.
+     */
+    fun graph(
+        path: String?, depth: Int, direction: String = "both",
+        problemsOnly: Boolean = false, kinds: Collection<String> = emptyList(), repos: Collection<String> = emptyList(),
+    ) = call {
         it.graph(JsonObject().apply {
-            if (path != null) addProperty("uri", fileUri(path))
-            addProperty("depth", depth)
+            if (path != null) {
+                addProperty("uri", fileUri(path))
+                addProperty("depth", depth)
+                addProperty("direction", direction)
+            }
+            addProperty("problemsOnly", problemsOnly)
+            add("kinds", JsonArray().apply { kinds.forEach { k -> add(k) } })
+            add("repos", JsonArray().apply { repos.forEach { r -> add(r) } })
         })
     }
+    fun stats() = call { it.stats(JsonObject()) }
     fun workspaceDiagnostics() = call { it.workspaceDiagnostics(JsonObject()) }
     fun templates() = call { it.templates(JsonObject()) }
     /** Parameters of the template referenced on [line] of [path] (or of [path] itself). */

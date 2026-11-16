@@ -97,7 +97,38 @@ Each feature is computed once by `atn` and shown through the IDE's own UI.
 | Jump to the referenced template | Ctrl/Cmd+click, or the gutter icon on `template:` | Ctrl/Cmd+click |
 | Problems and fixes | Inspections + Alt+Enter; Diagnostics tab | Problems view + quick fixes |
 | Template graph | Graph tab (IntelliJ toolbar and menus) | Graph panel |
+| Graph filters: problems, kinds, repositories, callers/callees | *Only Problems*, *Filter* popup and direction combo in the Graph tab toolbar | Filter bar under the graph toolbar; direction next to *Depth* |
+| Most used / mis-called / unused templates, per-repository counts | Stats tab | Stats view |
 | Report a bug or an idea | Bug button in the Azure Templates tool window header; *Help → Report Azure Templates Navigator Issue…*; *Report to Azure Templates Navigator* in the IDE error dialog | *Help and Feedback* view in the Azure Templates sidebar; bug button on the Dependencies and Diagnostics views; *Azure Templates: Report Issue…* |
+
+## Template graph and stats
+
+**Node size** follows callers + callees, counted over the whole workspace, on a square-root scale. A template used everywhere is
+big even when the graph shows only the open file. Hover a node for the numbers: files and call sites that use it, pipelines that
+reach it, what it calls, its parameters and its problems. A red or amber badge marks errors or warnings. The corner shows how many
+nodes and edges are drawn out of the total.
+
+**Filters** (both IDEs, computed by the server):
+
+- **Problems**: files with errors or warnings, plus missing templates, unknown aliases and unavailable repositories.
+- **Kinds**: pipelines, templates, external templates, broken references.
+- **Repositories**: this workspace and each repository templates come from.
+- **Around the current file**: depth 1–10, callers only, callees only, or both. *Focus graph here* (VS Code) or *Center Graph on This File* (IntelliJ) on a node moves the focus.
+
+With *Problems* or *Repositories*, the direct callers of what matches stay in the graph, faded, so you can see who uses it.
+
+**Stats** is aimed at teams that publish templates:
+
+| Section | What it tells you |
+|---|---|
+| Overview | Pipelines, templates, external templates, repositories, errors, warnings, broken references |
+| Most used | Call sites, files and pipelines reached: what a parameter change affects most |
+| Most mis-called | Call sites with parameter problems: often a confusing interface |
+| Calls the most templates | Wide templates that are hard to change and debug |
+| Not referenced in this workspace | Clean-up candidates. Templates published for other repositories appear here too, so check before deleting |
+| By repository | Templates, call sites and files using each repository |
+
+Click a row to open the file. *Show in Graph* centres the graph on that file, filters it to the repository, or shows only problems.
 
 ## Settings (identical in both IDEs)
 
