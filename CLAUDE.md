@@ -32,14 +32,14 @@ If you find yourself writing YAML parsing or template logic in JS or Kotlin, sto
   - `window.atnHost.nativeChrome = true` (IntelliJ) hides the page's own search bar and toolbar, and sends `contextMenu` instead of drawing a menu. The host provides those natively.
 - **`clients/vscode`**: plain JS with `vscode-languageclient`.
   - `extension.js`: client and commands. `src/views.js`: tree providers. `src/graphView.js`: the webview.
-  - `src/issue.js`: the pre-filled GitHub issue URL behind `reportIssue`. The *Help and Feedback* view (`FeedbackTreeProvider`) and a bug button on the view titles run it.
+  - `src/issue.js`: the pre-filled GitHub issue URL behind `reportIssue`. The *Help and Feedback* view (`FeedbackTreeProvider`) and a bug button on the view titles run it; `giveFeedback` opens the Marketplace reviews.
   - `scripts/copy-assets.js` copies `shared/webview` → `media/` and `dist/bin` → `bin/`. Both are generated, so don't edit them.
 - **`clients/intellij`**: Kotlin with LSP4IJ.
   - `lsp/AtnLsp.kt`: factory, connection, client and binary lookup. `AtnService.kt`: requests and the change topic. `settings/`, `ui/` (tool window tabs, JCEF graph, actions).
   - `ui/Navigation.kt`: the native pieces (usages popup, `ShowUsagesAction`, gutter icons on `template:`, Structure view routing).
   - The look should be IntelliJ's, not a reskin of VS Code. Prefer an IntelliJ surface fed by an LSP feature (Find Usages, Call Hierarchy, Structure, Code Vision) over a custom panel. LSP4IJ registers some providers only for TEXT/TextMate, so `plugin.xml` registers them for `yaml`.
   - Code lens commands are `<commandPrefix>showUsages`. LSP4IJ runs the IntelliJ action with that id, `AzureTemplatesNavigator.showUsages`, and passes the arguments in `CommandExecutor.LSP_COMMAND`. VS Code registers `azure-templates-navigator.showUsages`.
-  - `IssueReport.kt` (URL builder, unit-tested) and `ui/ReportIssue.kt` (the action, shown as a bug button in the tool window header and in the Help menu; `errorHandler` for the IDE error dialog).
+  - `IssueReport.kt` (URL builder, unit-tested) and `ui/ReportIssue.kt` (the action, shown as a bug button in the tool window header and in the Help menu: bug, docs, log, feature, Marketplace review; `errorHandler` for the IDE error dialog).
   - Gradle copies `shared/webview` into resources and `dist/bin` into the sandbox and zip.
 
 ## Commands

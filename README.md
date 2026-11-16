@@ -157,6 +157,10 @@ Nothing is sent until you submit the issue on GitHub, so check it for anything p
 most useful with the smallest YAML that shows the problem and the log: *Azure Templates: Show Log* in VS Code,
 lines starting with `[atn]` in IntelliJ's *Help → Show Log*, or the output of `atn check`.
 
+Both places also offer the documentation, the log, and **Give Feedback**, which opens the extension's reviews on the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=bogdanbujor.azure-templates-navigator&ssr=false#review-details)
+or [JetBrains Marketplace](https://plugins.jetbrains.com/plugin/30272-azure-templates-navigator/reviews). Ratings and reviews there help other people find it.
+
 ## Building
 
 Requirements: Go ≥ 1.20, Node ≥ 18 (VS Code), JDK 17+ (IntelliJ; Gradle wrapper included).

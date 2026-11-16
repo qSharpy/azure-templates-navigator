@@ -15,7 +15,7 @@ const vscode = require('vscode');
 const { LanguageClient, State } = require('vscode-languageclient/node');
 const { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider, FeedbackTreeProvider } = require('./src/views');
 const { GraphViewProvider } = require('./src/graphView');
-const { issueUrl } = require('./src/issue');
+const { issueUrl, REVIEW_URL } = require('./src/issue');
 
 const SECTION = 'azure-templates-navigator';
 
@@ -267,9 +267,11 @@ async function activate(context) {
       if (!kind) {
         const pick = await vscode.window.showQuickPick([
           { label: '$(bug) Report a bug', description: 'Something doesn\'t work as expected', kind: 'bug' },
-          { label: '$(lightbulb) Suggest a feature or give feedback', kind: 'feature' },
-        ], { placeHolder: 'Opens a new issue on GitHub, with your versions filled in' });
+          { label: '$(lightbulb) Suggest a feature', kind: 'feature' },
+          { label: '$(star-empty) Give feedback', description: 'Rate and review on the Visual Studio Marketplace', kind: 'review' },
+        ], { placeHolder: 'Report a bug or suggest a feature on GitHub, or leave a review' });
         if (!pick) return undefined;
+        if (pick.kind === 'review') return vscode.commands.executeCommand(`${SECTION}.giveFeedback`);
         kind = pick.kind;
       }
       // Works without a running server: that is often when people report.
@@ -287,6 +289,11 @@ async function activate(context) {
       // turn the body's own '&' and '=' into parameter separators.
       if (a.open !== false) await vscode.env.openExternal(url);
       return url;
+    },
+    // The Marketplace listing's review section. A string, for the same reason as above.
+    giveFeedback: async (a = {}) => {
+      if (a.open !== false) await vscode.env.openExternal(REVIEW_URL);
+      return REVIEW_URL;
     },
   };
   for (const [name, fn] of Object.entries(commands)) {

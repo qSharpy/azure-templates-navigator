@@ -7,6 +7,8 @@ import com.bogdanbujor.azuretemplates.str
 import com.intellij.icons.AllIcons
 import com.intellij.ide.BrowserUtil
 import com.intellij.ide.plugins.PluginManagerCore
+import com.intellij.openapi.actionSystem.ActionManager
+import com.intellij.openapi.actionSystem.ActionPlaces
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationInfo
@@ -19,10 +21,12 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.popup.JBPopupFactory
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.ColoredListCellRenderer
+import com.intellij.ui.SimpleTextAttributes
 import com.intellij.util.Consumer
 import java.awt.Component
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import javax.swing.Icon
 import javax.swing.JList
 
 private const val PLUGIN_ID = "com.bogdanbujor.azure-templates-navigator"
@@ -53,25 +57,38 @@ internal object IssueEnvironment {
     }
 }
 
-/** Help | Report Azure Templates Navigator Issue…: a bug report or a feature request, pre-filled with versions. */
+/**
+ * The bug button in the tool window header (also Help | Report Azure Templates Navigator Issue…):
+ * report a bug, read the docs, open the log, suggest a feature, or rate the plugin on JetBrains Marketplace.
+ */
 class ReportIssueAction : DumbAwareAction() {
+    private class Choice(val label: String, val icon: Icon, val hint: String = "", val run: () -> Unit)
+
     override fun getActionUpdateThread() = ActionUpdateThread.BGT
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project
-        val choices = listOf(
-            IssueReport.Kind.BUG to "Report a bug",
-            IssueReport.Kind.FEATURE to "Suggest a feature or give feedback",
+        val choices = listOfNotNull(
+            Choice("Report a Bug", AllIcons.Actions.StartDebugger, "GitHub issue with your versions filled in") { IssueEnvironment.open(project, IssueReport.Kind.BUG) },
+            Choice("Documentation", AllIcons.Actions.Help) { BrowserUtil.browse(IssueReport.DOCS_URL) },
+            ActionManager.getInstance().getAction("ShowLog")?.let { showLog ->
+                Choice("Show Log", AllIcons.Debugger.Console, "lines starting with [atn]") {
+                    ActionManager.getInstance().tryToExecute(showLog, null, null, ActionPlaces.UNKNOWN, true)
+                }
+            },
+            Choice("Suggest a Feature", AllIcons.Actions.IntentionBulb, "GitHub issue") { IssueEnvironment.open(project, IssueReport.Kind.FEATURE) },
+            Choice("Give Feedback", AllIcons.Nodes.Favorite, "rate and review on JetBrains Marketplace") { BrowserUtil.browse(IssueReport.REVIEW_URL) },
         )
         val popup = JBPopupFactory.getInstance().createPopupChooserBuilder(choices)
-            .setTitle("Opens a New Issue on GitHub")
-            .setRenderer(object : ColoredListCellRenderer<Pair<IssueReport.Kind, String>>() {
-                override fun customizeCellRenderer(list: JList<out Pair<IssueReport.Kind, String>>, value: Pair<IssueReport.Kind, String>, index: Int, selected: Boolean, hasFocus: Boolean) {
-                    icon = if (value.first == IssueReport.Kind.BUG) AllIcons.Actions.StartDebugger else AllIcons.Actions.IntentionBulb
-                    append(value.second)
+            .setTitle("Azure Templates Navigator: Help and Feedback")
+            .setRenderer(object : ColoredListCellRenderer<Choice>() {
+                override fun customizeCellRenderer(list: JList<out Choice>, value: Choice, index: Int, selected: Boolean, hasFocus: Boolean) {
+                    icon = value.icon
+                    append(value.label)
+                    if (value.hint.isNotEmpty()) append("  ${value.hint}", SimpleTextAttributes.GRAYED_ATTRIBUTES)
                 }
             })
-            .setItemChosenCallback { IssueEnvironment.open(project, it.first) }
+            .setItemChosenCallback { it.run() }
             .createPopup()
         if (project != null) popup.showCenteredInCurrentWindow(project) else popup.showInFocusCenter()
     }

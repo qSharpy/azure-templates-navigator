@@ -225,6 +225,12 @@
         "title": "Report Issue…",
         "category": "Azure Templates",
         "icon": "$(bug)"
+      },
+      {
+        "command": "azure-templates-navigator.giveFeedback",
+        "title": "Give Feedback (Rate and Review)",
+        "category": "Azure Templates",
+        "icon": "$(star-empty)"
       }
     ],
     "viewsContainers": {

@@ -12,6 +12,10 @@ import java.nio.charset.StandardCharsets
  */
 object IssueReport {
     const val ISSUES_URL = "https://github.com/qSharpy/azure-templates-navigator/issues"
+    const val DOCS_URL = "https://github.com/qSharpy/azure-templates-navigator#readme"
+
+    /** "Give Feedback": the plugin's reviews on JetBrains Marketplace (30272 is its Marketplace id). */
+    const val REVIEW_URL = "https://plugins.jetbrains.com/plugin/30272-azure-templates-navigator/reviews"
 
     /** GitHub rejects very long URLs; stay well below the limit. */
     const val MAX_URL = 7000

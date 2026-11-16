@@ -94,7 +94,7 @@
             <separator/>
             <action id="AzureTemplatesNavigator.ReportIssue" class="com.bogdanbujor.azuretemplates.ui.ReportIssueAction"
                     text="Report Azure Templates Navigator Issue…" icon="AllIcons.Actions.StartDebugger"
-                    description="Report a bug or suggest a feature on GitHub, with your versions filled in">
+                    description="Report a bug, suggest a feature, or rate the plugin on JetBrains Marketplace">
                 <add-to-group group-id="HelpMenu" anchor="last"/>
             </action>
         </group>

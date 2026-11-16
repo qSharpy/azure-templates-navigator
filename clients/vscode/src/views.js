@@ -5,6 +5,7 @@
 // descriptions and tooltips are identical to the IntelliJ plugin.
 
 const vscode = require('vscode');
+const { DOCS_URL } = require('./issue');
 
 const KIND_ICON = {
   pipeline: 'rocket',
@@ -162,22 +163,24 @@ class RepositoriesTreeProvider extends Base {
   }
 }
 
-/** "Help and Feedback": always-visible links to report a bug, suggest a feature, read the docs or open the log. */
+/** "Help and Feedback": always-visible links to report a bug, read the docs, open the log, suggest a feature or leave a review. */
 class FeedbackTreeProvider {
   getChildren() {
     const ns = 'azure-templates-navigator';
     return [
-      ['Report a Bug', 'bug', `${ns}.reportIssue`, [{ kind: 'bug' }], 'Opens a new GitHub issue with your versions filled in'],
-      ['Suggest a Feature or Give Feedback', 'lightbulb', `${ns}.reportIssue`, [{ kind: 'feature' }], 'Opens a new GitHub issue'],
-      ['Documentation', 'book', 'vscode.open', [vscode.Uri.parse('https://github.com/qSharpy/azure-templates-navigator#readme')], 'README on GitHub'],
-      ['Show Log', 'output', `${ns}.showOutput`, [], 'Useful to attach to a bug report'],
+      { label: 'Report a Bug', icon: 'bug', command: `${ns}.reportIssue`, args: [{ kind: 'bug' }], tooltip: 'Opens a new GitHub issue with your versions filled in' },
+      { label: 'Documentation', icon: 'book', command: 'vscode.open', args: [vscode.Uri.parse(DOCS_URL)], tooltip: 'README on GitHub' },
+      { label: 'Show Log', icon: 'output', command: `${ns}.showOutput`, tooltip: 'Useful to attach to a bug report' },
+      { label: 'Suggest a Feature', icon: 'lightbulb', command: `${ns}.reportIssue`, args: [{ kind: 'feature' }], tooltip: 'Opens a new GitHub issue' },
+      { label: 'Give Feedback', description: 'rate and review', icon: 'star-empty', command: `${ns}.giveFeedback`, tooltip: 'Rate and review the extension on the Visual Studio Marketplace' },
     ];
   }
-  getTreeItem([label, icon, command, args, tooltip]) {
-    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-    item.iconPath = new vscode.ThemeIcon(icon);
-    item.tooltip = tooltip;
-    item.command = { command, title: label, arguments: args };
+  getTreeItem(el) {
+    const item = new vscode.TreeItem(el.label, vscode.TreeItemCollapsibleState.None);
+    item.iconPath = new vscode.ThemeIcon(el.icon);
+    item.description = el.description;
+    item.tooltip = el.tooltip;
+    item.command = { command: el.command, title: el.label, arguments: el.args || [] };
     return item;
   }
 }

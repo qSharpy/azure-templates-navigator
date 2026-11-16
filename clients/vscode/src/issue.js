@@ -6,6 +6,9 @@
 // Only versions and the OS go in the body: no paths, settings or workspace data.
 
 const ISSUES_URL = 'https://github.com/qSharpy/azure-templates-navigator/issues';
+const DOCS_URL = 'https://github.com/qSharpy/azure-templates-navigator#readme';
+// "Give Feedback": the Marketplace listing's rating and review section.
+const REVIEW_URL = 'https://marketplace.visualstudio.com/items?itemName=bogdanbujor.azure-templates-navigator&ssr=false#review-details';
 
 // GitHub rejects very long URLs; stay well below the limit.
 const MAX_URL = 7000;
@@ -41,4 +44,4 @@ function issueUrl(kind, { title = '', environment }) {
   return url.length <= MAX_URL ? url : `${ISSUES_URL}/new?${new URLSearchParams({ labels: spec.label, title })}`;
 }
 
-module.exports = { issueUrl, ISSUES_URL };
+module.exports = { issueUrl, ISSUES_URL, DOCS_URL, REVIEW_URL };

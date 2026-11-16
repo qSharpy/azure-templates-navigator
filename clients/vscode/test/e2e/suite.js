@@ -56,7 +56,7 @@ async function run() {
 
   // 6. commands registered
   const all = await vscode.commands.getCommands(true);
-  for (const c of ['searchTemplates', 'searchParameters', 'fetchRepository', 'fetchAllRepositories', 'refresh', 'expandTemplateGraph', 'showUsages', 'reportIssue']) {
+  for (const c of ['searchTemplates', 'searchParameters', 'fetchRepository', 'fetchAllRepositories', 'refresh', 'expandTemplateGraph', 'showUsages', 'reportIssue', 'giveFeedback']) {
     assert.ok(all.includes(`azure-templates-navigator.${c}`), c);
   }
   // 6b. Report Issue: a pre-filled GitHub URL with versions and nothing local
@@ -71,6 +71,8 @@ async function run() {
   assert.ok(!q.get('body').includes(root), 'no workspace paths in the issue');
   const feature = new URL(await vscode.commands.executeCommand('azure-templates-navigator.reportIssue', { kind: 'feature', open: false }));
   assert.strictEqual(feature.searchParams.get('labels'), 'enhancement');
+  const review = await vscode.commands.executeCommand('azure-templates-navigator.giveFeedback', { open: false });
+  assert.ok(review.startsWith('https://marketplace.visualstudio.com/items?itemName=bogdanbujor.azure-templates-navigator'));
   // 7. navigation on an extends: template — usages lens, references, outline
   const base = vscode.Uri.file(path.join(root, 'extends/platform-templates/pipelines/secure-base.yml'));
   await vscode.workspace.openTextDocument(base);
