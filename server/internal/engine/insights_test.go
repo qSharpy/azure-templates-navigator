@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -223,5 +224,159 @@ func TestStats(t *testing.T) {
 	// build.yml declares typed parameters, so an unknown one is an error (Azure rejects the run)
 	if r := labels["Unknown parameter"]; r.Kind != "error" || r.Children[0].Label != "azure-pipelines.yml" || r.Children[0].Line == 0 {
 		t.Errorf("unknown parameter: %+v", r)
+	}
+}
+
+func TestUniqueSuffixes(t *testing.T) {
+	got := uniqueSuffixes([]string{
+		"teams/a/build/template.yml", "teams/b/build/template.yml", "deploy/template.yml",
+		"pipelines/azure-pipelines.yml", "solo.yml",
+	})
+	want := map[string]string{
+		"teams/a/build/template.yml":    "a/build/template.yml",
+		"teams/b/build/template.yml":    "b/build/template.yml",
+		"deploy/template.yml":           "deploy/template.yml",
+		"pipelines/azure-pipelines.yml": "azure-pipelines.yml",
+		"solo.yml":                      "solo.yml",
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("%s: got %q, want %q", k, got[k], v)
+		}
+	}
+	// One path is the other's suffix: the shorter keeps its whole path.
+	got = uniqueSuffixes([]string{"x/t.yml", "y/x/t.yml"})
+	if got["x/t.yml"] != "x/t.yml" || got["y/x/t.yml"] != "y/x/t.yml" {
+		t.Errorf("nested: %+v", got)
+	}
+}
+
+func TestStatsDrillDown(t *testing.T) {
+	_, e := insightsWorkspace(t)
+	ov := map[string]StatRow{}
+	ss := e.Stats()
+	for _, r := range section(t, ss, "overview").Rows {
+		ov[r.Label] = r
+	}
+	if r := ov["Pipelines"]; r.View != "pipelines" || r.Focus != "kind" || len(r.Kinds) != 1 || r.Kinds[0] != "pipeline" {
+		t.Errorf("pipelines row: %+v", r)
+	}
+	if r := ov["External templates"]; r.Focus != "kind" || r.Kinds[0] != "external" {
+		t.Errorf("external row: %+v", r)
+	}
+	if r := ov["Repositories"]; r.View != "repositories" {
+		t.Errorf("repositories row: %+v", r)
+	}
+	// Broken references: one child per call site, each opening at it.
+	br := ov["Broken references"]
+	if len(br.Children) != br.Value || br.Value != 2 {
+		t.Fatalf("broken children: %d for %d: %+v", len(br.Children), br.Value, br.Children)
+	}
+	refs := map[string]StatRow{}
+	for _, c := range br.Children {
+		refs[c.Label] = c
+		if c.FilePath == "" || c.Line == 0 || c.Kind != "missing" {
+			t.Errorf("broken child: %+v", c)
+		}
+	}
+	if c := refs["x.yml@tools"]; !strings.HasPrefix(c.Description, "consumer.yml:") || !strings.Contains(c.Tooltip, "org/tools is not available") {
+		t.Errorf("x.yml@tools: %+v", c)
+	}
+	if _, ok := refs["templates/nope.yml"]; !ok {
+		t.Errorf("nope.yml missing from %+v", refs)
+	}
+	// Errors: the files with errors, adding up to the count, at their first one.
+	er := ov["Errors"]
+	sum := 0
+	for _, c := range er.Children {
+		sum += c.Value
+		if c.FilePath == "" || c.Severity != SevError {
+			t.Errorf("errors child: %+v", c)
+		}
+	}
+	if sum != er.Value || len(er.Children) == 0 {
+		t.Errorf("errors children add up to %d, want %d", sum, er.Value)
+	}
+}
+
+func TestRepositoriesListTemplatesAndDeclarations(t *testing.T) {
+	root, e := insightsWorkspace(t)
+	rs := e.Repositories()
+	if len(rs) != 1 {
+		t.Fatalf("repositories: %+v", rs)
+	}
+	r := rs[0]
+	consumer := filepath.Join(root, "consumer.yml")
+	if len(r.Declarations) != 1 || r.Declarations[0].FilePath != consumer || r.Declarations[0].Line != 3 ||
+		r.Declarations[0].RelativePath != "consumer.yml" || len(r.DeclaredIn) != 1 {
+		t.Errorf("declarations: %+v", r.Declarations)
+	}
+	if len(r.Templates) != 1 {
+		t.Fatalf("templates: %+v", r.Templates)
+	}
+	if tp := r.Templates[0]; tp.Label != "x.yml" || !tp.Broken || tp.Usages != 1 || tp.Callers != 1 || tp.RefFile != consumer || tp.RefLine != 7 {
+		t.Errorf("template: %+v", tp)
+	}
+}
+
+func TestRepositoryTemplatesFromLocalRepo(t *testing.T) {
+	parent := t.TempDir()
+	write(t, parent, "tpl/stages/deploy.yml", "parameters:\n  - name: env\n    default: dev\nstages: []\n")
+	write(t, parent, "tpl/steps/build.yml", "steps: []\n")
+	root := filepath.Join(parent, "app")
+	write(t, root, ".git/HEAD", "")
+	res := "resources:\n  repositories:\n    - repository: tpl\n      type: github\n      name: contoso/tpl\n"
+	write(t, root, "a.yml", "trigger: none\n"+res+"stages:\n  - template: stages/deploy.yml@tpl\n  - template: stages/deploy.yml@tpl\n")
+	write(t, root, "b.yml", "trigger: none\n"+res+"stages:\n  - template: /stages/deploy.yml@tpl\n  - template: steps/build.yml@tpl\n")
+	st := DefaultSettings()
+	st.Repositories.AutoFetch = false
+	e := New([]string{root}, st)
+	e.Rescan()
+	rs := e.Repositories()
+	if len(rs) != 1 || rs[0].Location.State != "ready" {
+		t.Fatalf("repositories: %+v", rs)
+	}
+	ts := rs[0].Templates
+	if len(ts) != 2 || ts[0].Label != "stages/deploy.yml" || ts[0].Usages != 3 || ts[0].Callers != 2 || ts[0].FilePath == "" || ts[0].Broken ||
+		ts[1].Label != "steps/build.yml" || ts[1].Usages != 1 {
+		t.Errorf("templates: %+v", ts)
+	}
+	if len(rs[0].Declarations) != 2 {
+		t.Errorf("declarations: %+v", rs[0].Declarations)
+	}
+}
+
+func TestGraphLabelsTellSameNamesApart(t *testing.T) {
+	root, e := newWorkspace(t)
+	write(t, root, "teams/a/template.yml", "steps: []\n")
+	write(t, root, "teams/b/template.yml", "steps: []\n")
+	write(t, root, "teams/p.yml", "trigger: none\nsteps:\n  - template: a/template.yml\n  - template: b/template.yml\n")
+	e.Rescan()
+	n := nodesByLabel(e.BuildGraph(GraphRequest{}))
+	if _, ok := n["a/template.yml"]; !ok {
+		t.Errorf("labels: %v", keysOf(n))
+	}
+	if _, ok := n["b/template.yml"]; !ok {
+		t.Errorf("labels: %v", keysOf(n))
+	}
+	if _, ok := n["build.yml"]; !ok {
+		t.Errorf("unique names keep their file name: %v", keysOf(n))
+	}
+	// The same label in a file-scoped graph that only holds one of them.
+	fg := nodesByLabel(e.BuildGraph(GraphRequest{File: filepath.Join(root, "teams/a/template.yml"), Depth: 1}))
+	if _, ok := fg["a/template.yml"]; !ok {
+		t.Errorf("file-scoped labels: %v", keysOf(fg))
+	}
+}
+
+func TestUniqueSuffixesManySameNames(t *testing.T) {
+	var paths []string
+	for i := 0; i < 3000; i++ {
+		paths = append(paths, fmt.Sprintf("teams/t%d/build/template.yml", i))
+	}
+	paths = append(paths, "teams/t1/deploy/template.yml")
+	got := uniqueSuffixes(paths)
+	if got["teams/t7/build/template.yml"] != "t7/build/template.yml" || got["teams/t1/deploy/template.yml"] != "deploy/template.yml" {
+		t.Errorf("got %q, %q", got["teams/t7/build/template.yml"], got["teams/t1/deploy/template.yml"])
 	}
 }

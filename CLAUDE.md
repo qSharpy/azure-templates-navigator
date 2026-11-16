@@ -24,7 +24,8 @@ If you find yourself writing YAML parsing or template logic in JS or Kotlin, sto
   - Name-based checks (`dependsOn`, outputs) only run when the expansion is complete (no dynamic or unresolved template references). They collect names across every `${{ if }}` branch, and `${{ }}` parts of names match anything, so they only report names that can't exist.
 - **`server/internal/lsp`**: JSON-RPC framing and the LSP methods. It converts between UTF-16 positions and byte columns.
   - Standard methods beyond hover/definition/completion/codeAction: `documentSymbol` (outline: `pipeline/outline.go`), `references`, `codeLens` ("N usages" above a template), `prepareCallHierarchy` + `callHierarchy/incomingCalls|outgoingCalls`. Logic is in `engine/navigation.go`; `lsp/navigation.go` only converts.
-  - Custom requests: `atn/dependencyTree`, `atn/graph`, `atn/workspaceDiagnostics`, `atn/templates`, `atn/parameters`, `atn/repositories`, `atn/references` (usages with labels, for client-drawn popups), `atn/stats` (Stats view sections), `atn/pipelineCheck` (a pipeline's verdict and problems; without a uri, every pipeline's, failing first, for the Pipelines view, or null when diagnostics are off), `atn/info`.
+  - Custom requests: `atn/dependencyTree`, `atn/graph`, `atn/workspaceDiagnostics`, `atn/templates`, `atn/parameters`, `atn/repositories` (each repository with its `declarations` and the `templates` the workspace uses from it), `atn/references` (usages with labels, for client-drawn popups), `atn/stats` (Stats view sections), `atn/pipelineCheck` (a pipeline's verdict and problems; without a uri, every pipeline's, failing first, for the Pipelines view, or null when diagnostics are off), `atn/info`.
+  - `atn/stats` rows: a click opens `filePath` at `line`; a row with `children` only expands; else `view` (`pipelines`, `repositories`) opens that client view; else `focus` (`file`, `repo`, `kind` with `kinds`, `problems`) drives the graph, which is also what "Show in Graph" does.
   - `atn/graph` takes `uri`/`depth`/`direction` (file scope) and the filters `problemsOnly`, `kinds`, `repos` (empty = all). It returns nodes with workspace-wide `callers`/`usages`/`pipelines`/`callees`/`weight` (node size) and a `tooltip`, plus `totalNodes`, `totalEdges` and `facets`. Filtering and counting live in `engine/insights.go`, not in the webview.
   - Code lenses have a kind. `usages` (above a template) runs `<commandPrefix>showUsages`. `pipeline` (the verdict above a root pipeline) runs `<commandPrefix>showPipelineProblems` with `{uri}`. The server sends `workspace/codeLens/refresh` when diagnostics change, because a verdict depends on other files.
   - Notification: `atn/didChange`.
@@ -33,12 +34,14 @@ If you find yourself writing YAML parsing or template logic in JS or Kotlin, sto
 - **`shared/webview`**: the graph page.
   - `graph.html` has `{{HEAD}}` and `{{SCRIPTS}}` placeholders, filled by each host.
   - `graph.js` talks to `window.atnHost || acquireVsCodeApi()`.
-  - Message types: ready, setFileScope, setDepth, setDirection, setFilter, focusFile, openFile, openFileBeside, copyPath, expand, contextMenu → graphData, searchData, fit, setFullPath.
+  - Message types: ready, setFileScope, setDepth, setDirection, setFilter, focusFile, openFile, openFileBeside, copyPath, expand, contextMenu → graphData, searchData, fit, setFullPath, select.
+  - Node labels come from the engine: the shortest end of the path that tells same-named files apart (`build/template.yml`). For workspace files it is the same in every scope and filter; external files are only told apart from what the graph draws.
+  - In workspace scope the graph doesn't follow the editor. The host sends `activeFile` in `graphData` and `select {filePath}` when the editor changes; the page lights that node with everything that reaches it and everything it calls. A click selects too, a background click clears it.
   - The host owns the filter state and echoes it in `graphData` with the totals and facets. The page's filter bar only sends `setFilter`.
   - `window.atnHost.nativeChrome = true` (IntelliJ) hides the page's own search bar, toolbar and filter bar, and sends `contextMenu` instead of drawing a menu. The host provides those natively. The counts overlay and legend stay in the page.
 - **`clients/vscode`**: plain JS with `vscode-languageclient`.
   - `extension.js`: client and commands. `src/views.js`: tree providers (including Pipelines and Stats). `src/graphView.js`: the webview.
-  - `activate()` returns `{ request, graph, stats, pipelines }` for the E2E test.
+  - `activate()` returns `{ request, graph, stats, pipelines, repositories }` for the E2E test.
   - `src/issue.js`: the pre-filled GitHub issue URL behind `reportIssue`. The *Help and Feedback* view (`FeedbackTreeProvider`) and a bug button on the view titles run it; `giveFeedback` opens the Marketplace reviews.
   - `scripts/copy-assets.js` copies `shared/webview` → `media/` and `dist/bin` → `bin/`. Both are generated, so don't edit them.
 - **`clients/intellij`**: Kotlin with LSP4IJ.

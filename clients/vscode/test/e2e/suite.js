@@ -159,6 +159,42 @@ async function run() {
   console.log('graph problems:', `${pg.nodes.length}/${pg.totalNodes} nodes, facet ${pg.facets.problems}`);
   assert.ok(pg.nodes.filter(n => !n.context).every(n => n.broken || n.errors || n.warnings));
   assert.ok(pg.nodes.some(n => n.broken), 'broken references are kept');
+  assert.ok(pg.activeFile, 'a workspace graph knows the active file, to select it');
+
+  // Show in Graph on a file after that: the problems filter is cleared.
+  await vscode.commands.executeCommand('azure-templates-navigator.showInGraph', usedRows[0]);
+  const cleared = await waitFor(() => {
+    const l = api.graph.lastGraph;
+    return l && l.scopedFile === top.filePath && !l.filter.problemsOnly ? l : null;
+  });
+  assert.strictEqual(cleared.nodes.length, cleared.totalNodes, 'file focus shows the whole neighbourhood');
+
+  // Overview drill-downs: Broken references lists each reference, clicking one goes to it;
+  // the row itself only expands.
+  const ovRows = await api.stats.getChildren(roots.find(r => r.section.id === 'overview'));
+  const brokenEl = ovRows.find(r => r.row.label === 'Broken references');
+  const brokenKids = await api.stats.getChildren(brokenEl);
+  console.log('broken references:', brokenKids.map(k => `${k.row.label} (${k.row.description})`).join(', '));
+  assert.strictEqual(brokenKids.length, brokenEl.row.value);
+  assert.strictEqual(api.stats.getTreeItem(brokenEl).command, undefined, 'a row with children only expands');
+  const brokenItem = api.stats.getTreeItem(brokenKids[0]);
+  assert.strictEqual(brokenItem.command.command, 'azure-templates-navigator.openTemplate');
+  assert.ok(brokenItem.command.arguments[0].line > 0);
+  const pipeItem = api.stats.getTreeItem(ovRows.find(r => r.row.label === 'Pipelines'));
+  assert.strictEqual(pipeItem.command.command, 'azure-templates-navigator.pipelinesView.focus');
+
+  // Repositories: each repository lists the templates used from it, then "Declared in".
+  const repoEls = await api.repositories.getChildren();
+  const platform = repoEls.find(r => r.repo.alias === 'platform');
+  assert.ok(platform && platform.repo.declaredInPath, 'fetch resolves the alias in a declaring file');
+  const kids = await api.repositories.getChildren(platform);
+  const labels = kids.map(k => api.repositories.getTreeItem(k)).map(i => `${i.label} (${i.description})`);
+  console.log('repository @platform:', labels.join(', '));
+  assert.ok(kids[0].template && api.repositories.getTreeItem(kids[0]).command.arguments[0].filePath, 'a used template opens');
+  const declGroup = kids[kids.length - 1];
+  assert.ok(declGroup.declGroup && declGroup.children.length > 0);
+  const declItem = api.repositories.getTreeItem(declGroup.children[0]);
+  assert.strictEqual(declItem.command.command, 'azure-templates-navigator.openTemplate');
 
   // 9. pipeline verdict lens on a root pipeline
   const verdict = await waitFor(async () => {

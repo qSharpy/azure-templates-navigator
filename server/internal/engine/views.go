@@ -366,7 +366,8 @@ func (g *graphBuilder) target(ed edge) (string, bool) {
 	case id == "":
 		return "", false
 	case res.Kind == KindUnknownAlias:
-		g.node(GraphNode{ID: id, Label: filepath.Base(ed.ref.Path()), Kind: "unknown", Alias: res.Alias, Broken: "unknownAlias"})
+		// "@alias" in the label: the file it names may well exist under its right alias
+		g.node(GraphNode{ID: id, Label: filepath.Base(ed.ref.Path()) + "@" + res.Alias, Kind: "unknown", Alias: res.Alias, Broken: "unknownAlias"})
 		return id, false
 	case res.Kind == KindRepoUnavailable:
 		g.node(GraphNode{ID: id, Label: filepath.Base(ed.ref.Path()), Kind: "missing", Alias: res.Alias, RepoName: res.Repo.Name, Broken: "repoUnavailable",
@@ -392,6 +393,33 @@ func edgeLabel(ed edge) string {
 		return "@" + ed.res.Alias
 	}
 	return ""
+}
+
+// labelUniquely labels file nodes with the shortest end of their path that
+// tells them apart from every workspace file and every node of this graph
+// ("build/template.yml" when there are several template.yml). Workspace files
+// keep the same label whatever the scope, depth or filters; files from other
+// repositories are only told apart from what this graph draws.
+func (g *graphBuilder) labelUniquely() {
+	var paths []string
+	for _, p := range g.e.workspaceFiles() {
+		paths = append(paths, g.e.relPath(p))
+	}
+	for _, id := range g.order {
+		if n := g.nodes[id]; n.FilePath != "" && n.RelativePath != "" {
+			paths = append(paths, n.RelativePath)
+		}
+	}
+	short := uniqueSuffixes(paths)
+	for _, id := range g.order {
+		n := g.nodes[id]
+		if n.FilePath == "" || n.RelativePath == "" {
+			continue
+		}
+		if l := short[n.RelativePath]; l != "" {
+			n.Label = strings.TrimPrefix(l, "⬡ ")
+		}
+	}
 }
 
 // BuildGraph builds graph data for the webview.
@@ -484,6 +512,7 @@ func (e *Engine) BuildGraph(req GraphRequest) Graph {
 
 func (g *graphBuilder) result(req GraphRequest, focal string) Graph {
 	g.decorate(g.e.degrees(), g.e.problemCounts())
+	g.labelUniquely()
 	out := Graph{Nodes: []GraphNode{}, Edges: g.edges}
 	for _, id := range g.order {
 		out.Nodes = append(out.Nodes, *g.nodes[id])
@@ -579,42 +608,134 @@ type RepoInfo struct {
 	Name       string         `json:"name"`
 	Type       string         `json:"type"`
 	Ref        string         `json:"ref"`
-	DeclaredIn []string       `json:"declaredIn"`
+	DeclaredIn []string       `json:"declaredIn"` // relative paths (the CLI)
 	Location   repos.Location `json:"location"`
 	Label      string         `json:"label"`
 	Detail     string         `json:"detail"`
+	// Declarations: where `resources.repositories` declares it, by file.
+	Declarations []RepoDeclaration `json:"declarations"`
+	// Templates: what this workspace uses from it, most used first.
+	Templates []RepoTemplate `json:"templates"`
 }
 
-// Repositories lists every repository declared in the workspace.
+// RepoDeclaration is one `- repository:` entry declaring a repository.
+type RepoDeclaration struct {
+	FilePath     string `json:"filePath"`
+	RelativePath string `json:"relativePath"`
+	Line         int    `json:"line"` // 0-based
+}
+
+// RepoTemplate is a template the workspace uses from a repository. A broken
+// one (missing file, repository unavailable) has no FilePath; RefFile/RefLine
+// is its first call site, so there is always somewhere to go.
+type RepoTemplate struct {
+	Label    string `json:"label"` // path inside the repository
+	FilePath string `json:"filePath,omitempty"`
+	Usages   int    `json:"usages"`  // call sites in this workspace
+	Callers  int    `json:"callers"` // distinct files calling it
+	Broken   bool   `json:"broken,omitempty"`
+	RefFile  string `json:"refFile"`
+	RefLine  int    `json:"refLine"` // 0-based
+}
+
+func repoKey(d pipeline.RepoDecl) string { return d.Type + "|" + d.Name + "|" + d.Ref }
+
+// Repositories lists every repository declared in the workspace, with where
+// it is declared and which templates the workspace uses from it.
 func (e *Engine) Repositories() []RepoInfo {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.ensureLinked()
 	byKey := map[string]*RepoInfo{}
 	var keys []string
-	for _, p := range e.workspaceFiles() {
+	files := e.workspaceFiles()
+	for _, p := range files {
 		f := e.file(p)
 		if f == nil {
 			continue
 		}
-		for _, d := range f.repos {
-			k := d.Type + "|" + d.Name + "|" + d.Ref
+		var aliases []string
+		for a := range f.repos {
+			aliases = append(aliases, a)
+		}
+		sort.Strings(aliases)
+		for _, a := range aliases {
+			d := f.repos[a]
+			k := repoKey(d)
 			ri, ok := byKey[k]
 			if !ok {
 				repoRoot := e.repoRoot(filepath.Dir(p))
 				parents := []string{filepath.Dir(repoRoot)}
 				loc := e.Repos.Locate(d, parents, e.remoteFor(p))
-				ri = &RepoInfo{Alias: d.Alias, Name: d.Name, Type: d.Type, Ref: d.Ref, Location: loc}
+				ri = &RepoInfo{Alias: d.Alias, Name: d.Name, Type: d.Type, Ref: d.Ref, Location: loc,
+					Declarations: []RepoDeclaration{}, Templates: []RepoTemplate{}}
 				byKey[k] = ri
 				keys = append(keys, k)
 			}
 			ri.DeclaredIn = append(ri.DeclaredIn, e.relPath(p))
+			ri.Declarations = append(ri.Declarations, RepoDeclaration{FilePath: p, RelativePath: e.relPath(p), Line: d.Line})
 		}
 	}
+
+	// Templates used from each repository, from the workspace's call sites.
+	type use struct {
+		t       RepoTemplate
+		callers map[string]bool
+	}
+	uses := map[string]map[string]*use{} // repo key → target id → use
+	for _, p := range files {
+		for _, ed := range e.forward[p] {
+			res := ed.res
+			if res.Repo == nil || res.Kind == KindLocal || res.Kind == KindUnknownAlias {
+				continue
+			}
+			k := repoKey(*res.Repo)
+			ri := byKey[k]
+			id := targetID(ed)
+			if ri == nil || id == "" {
+				continue
+			}
+			m := uses[k]
+			if m == nil {
+				m = map[string]*use{}
+				uses[k] = m
+			}
+			u := m[id]
+			if u == nil {
+				u = &use{t: RepoTemplate{RefFile: p, RefLine: ed.ref.Line}, callers: map[string]bool{}}
+				u.t.Label = strings.TrimPrefix(filepath.ToSlash(ed.ref.Path()), "/")
+				if res.Exists && res.Path != "" {
+					u.t.FilePath = res.Path
+					if dir := ri.Location.Dir; dir != "" {
+						if rel, err := filepath.Rel(dir, res.Path); err == nil && !strings.HasPrefix(rel, "..") {
+							u.t.Label = filepath.ToSlash(rel)
+						}
+					}
+				} else {
+					u.t.Broken = true
+				}
+				m[id] = u
+			}
+			u.t.Usages++
+			u.callers[p] = true
+		}
+	}
+
 	sort.Strings(keys)
 	var out []RepoInfo
 	for _, k := range keys {
 		ri := byKey[k]
+		for _, u := range uses[k] {
+			u.t.Callers = len(u.callers)
+			ri.Templates = append(ri.Templates, u.t)
+		}
+		sort.Slice(ri.Templates, func(i, j int) bool {
+			a, b := ri.Templates[i], ri.Templates[j]
+			if a.Usages != b.Usages {
+				return a.Usages > b.Usages
+			}
+			return a.Label < b.Label
+		})
 		ri.Label = fmt.Sprintf("%s (@%s)", ri.Name, ri.Alias)
 		state := string(ri.Location.State)
 		switch ri.Location.Source {

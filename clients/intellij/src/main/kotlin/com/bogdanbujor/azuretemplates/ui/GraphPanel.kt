@@ -110,18 +110,21 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         }
     }
 
-    /** Scope the graph to [path] (Stats tab, node menu). */
+    /** Scope the graph to [path] (Stats tab, node menu), clearing filters an earlier "Show in Graph" set. */
     fun focusFile(path: String) {
         fileScope = true
+        problemsOnly = false
+        hiddenKinds = emptySet()
+        repos = emptySet()
         activeFile = path
         if (ready) sendGraph()
     }
 
     /** Whole-project graph with a filter (Stats tab). */
-    fun showFiltered(problems: Boolean = false, repo: String? = null) {
+    fun showFiltered(problems: Boolean = false, repo: String? = null, kinds: List<String> = emptyList()) {
         fileScope = false
         problemsOnly = problems
-        hiddenKinds = emptySet()
+        hiddenKinds = if (kinds.isEmpty()) emptySet() else allKinds.map { it.first }.filter { it !in kinds }.toSet()
         repos = if (repo != null) setOf(repo) else emptySet()
         if (ready) sendGraph()
     }
@@ -130,7 +133,10 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         if (path == null || !(path.endsWith(".yml", true) || path.endsWith(".yaml", true))) return
         val changed = path != activeFile
         activeFile = path
-        if (changed && fileScope && ready) sendGraph()
+        if (!changed || !ready) return
+        // A workspace graph doesn't follow the editor; it selects the file instead.
+        if (fileScope) sendGraph()
+        else post(JsonObject().apply { addProperty("type", "select"); addProperty("filePath", path) })
     }
 
     private fun resource(name: String) =
@@ -224,6 +230,7 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                 addProperty("direction", direction)
                 addProperty("fileScopeEnabled", fileScope)
                 if (scoped != null) addProperty("scopedFile", scoped)
+                activeFile?.let { addProperty("activeFile", it) }
                 addProperty("graphDepth", depth)
             })
         }
@@ -401,7 +408,7 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
                     override fun actionPerformed(e: AnActionEvent) = UsagesPopup.show(project, menuTarget, 0, 0, null, pointer())
                 })
                 add(object : DumbAwareAction("Center Graph on This File") {
-                    override fun actionPerformed(e: AnActionEvent) { fileScope = true; activeFile = menuTarget; sendGraph() }
+                    override fun actionPerformed(e: AnActionEvent) = focusFile(menuTarget)
                 })
                 addSeparator()
             }

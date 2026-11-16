@@ -84,7 +84,7 @@ Nobody has to clone `pipeline-templates` by hand. For `@templates` the engine lo
 2. **A clone next to the current repository**, `../pipeline-templates`, when `preferLocalClones` is on (the default). Your working copy, with your unpushed edits, wins over the cache.
 3. **The shared cache**, `~/.azure-templates-navigator/repos/<host>/<org>/[<project>/]<repo>/<ref>`. This is a shallow `git fetch --depth 1` of the referenced ref.
    - With `autoFetch` on (the default), the download starts as soon as a file references the repo. It is refreshed in the background every `refreshIntervalHours`.
-   - With `autoFetch` off, or after a failure, the hover and the quick fix show **Fetch repository**. The Repositories view lists every repo with its state, commit and age.
+   - With `autoFetch` off, or after a failure, the hover and the quick fix show **Fetch repository**. The Repositories view lists every repo with its state, commit and age, the templates the workspace uses from it (most used first) and the files that declare it.
 
 The download uses your normal git setup (SSH keys, Git Credential Manager, `gh auth setup-git`, Azure DevOps PAT helpers). It never prompts, so a missing credential shows up as a clear message instead of a hung IDE.
 
@@ -138,7 +138,13 @@ Each feature is computed once by `atn` and shown through the IDE's own UI.
 **Node size** follows callers + callees, counted over the whole workspace, on a square-root scale. A template used everywhere is
 big even when the graph shows only the open file. Hover a node for the numbers: files and call sites that use it, pipelines that
 reach it, what it calls, its parameters and its problems. A red or amber badge marks errors or warnings. The corner shows how many
-nodes and edges are drawn out of the total.
+nodes and edges are drawn out of the total, and says *Workspace* when the graph isn't following the editor.
+
+**Labels** are file names, with as many parent folders as it takes to tell same-named files apart (`build/template.yml`,
+`deploy/template.yml`). *Full Path* shows the whole path.
+
+**Click a node** to open it and select it: it stays lit with every pipeline and template that leads to it and everything it
+calls, and the rest dims. Click the background to clear it. In the workspace graph, the file open in the editor is selected.
 
 **Filters** (both IDEs, computed by the server):
 
@@ -153,7 +159,7 @@ With *Problems* or *Repositories*, the direct callers of what matches stay in th
 
 | Section | What it tells you |
 |---|---|
-| Overview | Pipelines, templates, external templates, repositories, errors, warnings, broken references |
+| Overview | Pipelines, templates, external templates, repositories, errors, warnings, broken references. Expand *Errors* or *Warnings* for the files that have them, *Broken references* for each broken reference |
 | Problems by type | Errors and warnings per kind (missing required parameter, unknown parameter, template not found…), most frequent first. Expand one for the files that have it; click a file to open its first one |
 | Most used | Call sites, files and pipelines reached: what a parameter change affects most |
 | Most mis-called | Call sites with parameter problems: often a confusing interface |
@@ -161,7 +167,7 @@ With *Problems* or *Repositories*, the direct callers of what matches stay in th
 | Not referenced in this workspace | Clean-up candidates. Templates published for other repositories appear here too, so check before deleting |
 | By repository | Templates, call sites and files using each repository |
 
-Click a row to open the file. *Show in Graph* centres the graph on that file, filters it to the repository, or shows only problems.
+Click a row to open the file (at the problem or reference, where there is one); *Pipelines* and *Repositories* open those views, *Templates* and *External templates* show that kind in the graph. *Show in Graph* centres the graph on that file, filters it to the repository or kind, or shows only problems.
 
 ## Settings (identical in both IDEs)
 

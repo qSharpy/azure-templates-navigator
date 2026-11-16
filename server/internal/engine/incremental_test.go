@@ -18,16 +18,21 @@ type indexState struct {
 	Aliases map[string]string
 	Graph   Graph
 	Stats   []StatSection
+	Repos   []RepoInfo
 }
 
 func stateOf(e *Engine) indexState {
 	diags := e.DiagnoseAll()
 	graph := e.BuildGraph(GraphRequest{})
 	stats := e.Stats()
+	repos := e.Repositories()
+	for i := range repos {
+		repos[i].Location.Dir = "" // the cache folder differs per engine
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.ensureLinked()
-	st := indexState{Diags: map[string][]Diagnostic{}, Forward: map[string][]string{}, Reverse: map[string][]string{}, Aliases: map[string]string{}, Graph: graph, Stats: stats}
+	st := indexState{Diags: map[string][]Diagnostic{}, Forward: map[string][]string{}, Reverse: map[string][]string{}, Aliases: map[string]string{}, Graph: graph, Stats: stats, Repos: repos}
 	for p, ds := range diags {
 		if len(ds) > 0 {
 			st.Diags[p] = ds

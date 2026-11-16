@@ -3,6 +3,25 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [2.6.0] — 2026-11-16
+
+### Changed
+
+- **Repositories view shows what you use from each repository.** Under a repository: the templates the workspace uses from it, most used first, with their usage counts (a template that can't be found is marked and opens its first call). The files that declare it moved into a collapsed *Declared in* group, and each one opens at its `resources.repositories` entry. Before, each declaring file was a bare "declared in" row that did nothing when clicked.
+- **Stats rows lead somewhere specific.**
+  - *Errors* and *Warnings* expand to the files that have them, most first; click one to go to its first problem.
+  - *Broken references* expands to each broken `template:` reference, with the file and line it is on; click one to go to it.
+  - *Pipelines* and *Repositories* open those views. *Templates* and *External templates* show that kind in the graph.
+- **Template graph.**
+  - Files with the same name are told apart: `build/template.yml` and `deploy/template.yml` instead of two `template.yml`. The label is the shortest end of the path that is unique, and long labels are shortened from the front so the file name stays.
+  - Clicking a node selects it: it stays lit with every pipeline and template that leads to it and everything it calls, and the rest dims. Click the background to clear it.
+  - In workspace scope, the file open in the editor is selected and centred, and the counts overlay says *Workspace*, so it's clear the graph isn't following the editor.
+
+### Fixed
+
+- **Show in Graph on a file** clears filters left by an earlier *Show in Graph* (for example *problems only* from the Errors row), so the graph shows all of the file's callers, matching its usage counts.
+- **Fetch / Update** in the Repositories view now passes the declaring file, so the right declaration is fetched when two files use the same alias for different repositories.
+
 ## [2.5.0] — 2026-11-16
 
 ### Added

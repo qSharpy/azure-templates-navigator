@@ -296,6 +296,9 @@
     }
     #scope-badge .muted { color: var(--vscode-descriptionForeground); }
     #scope-badge .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+    .select-ring { fill: none; stroke: var(--focal); stroke-width: 2; stroke-dasharray: 4 3; display: none; }
+    .node.selected .select-ring { display: inline; }
+    .node.focal .select-ring { display: none; } /* the current-file ring already marks it */
     .focal-halo  { fill: var(--focal); opacity: 0.2; }
     .focal-ring  { fill: none; stroke: var(--focal); stroke-width: 3; }
     .focal-pulse {
@@ -542,6 +545,7 @@
       </div>
       <div id="legend-body">
         <div class="legend-item"><svg width="18" height="12" style="flex-shrink:0"><circle cx="9" cy="6" r="5.5" fill="none" style="stroke:var(--focal)" stroke-width="2"/><circle cx="9" cy="6" r="2.5" fill="#888"/></svg>Current file (graph is built around it)</div>
+        <div class="legend-item"><svg width="18" height="12" style="flex-shrink:0"><circle cx="9" cy="6" r="5.5" fill="none" style="stroke:var(--focal)" stroke-width="1.5" stroke-dasharray="3 2"/><circle cx="9" cy="6" r="2.5" fill="#888"/></svg>Selected: lit with all it calls and all that reaches it</div>
         <div class="legend-item"><div class="legend-dot" style="background:#4e9de0"></div>Pipeline root</div>
         <div class="legend-item"><div class="legend-dot" style="background:#3dba8a"></div>Local template</div>
         <div class="legend-item"><div class="legend-dot" style="background:#9b6fd4"></div>External (cross-repo)</div>

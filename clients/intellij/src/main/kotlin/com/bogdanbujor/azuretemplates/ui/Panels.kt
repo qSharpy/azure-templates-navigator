@@ -35,6 +35,7 @@ import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
@@ -109,6 +110,15 @@ class AtnToolWindowFactory : ToolWindowFactory {
  * The tabs keep their order when wrapped (a JTabbedPane moves the selected row
  * next to the content, so rows swap on every click).
  */
+/** Shows the Azure Templates tool window on its first tab of [type]. */
+fun <T : JComponent> showTab(project: Project, type: Class<T>, then: (T) -> Unit = {}) {
+    val tw = ToolWindowManager.getInstance(project).getToolWindow("Azure Templates") ?: return
+    tw.show {
+        val tabs = tw.contentManager.contents.firstNotNullOfOrNull { it.component as? AtnTabs } ?: return@show
+        then(tabs.select(type) ?: return@show)
+    }
+}
+
 class AtnTabs : JPanel(BorderLayout()), Disposable {
     private val strip = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(2), JBUI.scale(2))).apply {
         isOpaque = false
@@ -505,7 +515,10 @@ class RepositoriesPanel(project: Project) : ServerTreePanel(project) {
         )
         contextMenu(
             action("Fetch / Update", AllIcons.Actions.Download) {
-                selectedItem()?.data?.let { service.fetchRepository(it.str("alias"), null) }
+                selectedItem()?.data?.let { r ->
+                    // the first declaring file, where the server resolves the alias
+                    service.fetchRepository(r.str("alias"), r.list("declarations").firstOrNull()?.str("filePath")?.ifEmpty { null })
+                }
             },
             action("Reveal Folder", AllIcons.Actions.MenuOpen) {
                 selectedItem()?.data?.get("location")?.obj()?.str("dir")?.takeIf { it.isNotEmpty() }?.let {
@@ -541,10 +554,34 @@ class RepositoriesPanel(project: Project) : ServerTreePanel(project) {
                 loc.str("error").takeIf { it.isNotEmpty() }?.let { append("<br>⚠ $it") }
                 append("</html>")
             }
-            val node = DefaultMutableTreeNode(Item(r.str("label"), r.str("detail"), icon, tip,
+            val templates = r.list("templates")
+            val decls = r.list("declarations")
+            val firstDecl = decls.firstOrNull()?.str("filePath")?.ifEmpty { null }
+            val used = "${templates.size} template${if (templates.size == 1) "" else "s"} used"
+            val node = DefaultMutableTreeNode(Item(r.str("label"), "${r.str("detail")} · $used", icon, tip,
                 error = state == "failed" || state == "unconfigured", data = r,
-                open = { if (state == "ready") loc.str("dir").takeIf { it.isNotEmpty() }?.let { RevealFileAction.openDirectory(File(it)) } else service.fetchRepository(r.str("alias"), null) }))
-            r.get("declaredIn").arr().forEach { node.add(DefaultMutableTreeNode(Item(it.asString, "declared in", AllIcons.FileTypes.Yaml))) }
+                open = { if (state == "ready") loc.str("dir").takeIf { it.isNotEmpty() }?.let { RevealFileAction.openDirectory(File(it)) } else service.fetchRepository(r.str("alias"), firstDecl) }))
+            // What the project uses from it, most used first; a broken one opens its first call.
+            for (t in templates) {
+                val n = t.int("usages")
+                val files = t.int("callers")
+                val broken = t.get("broken")?.asBoolean == true
+                val uses = "$n usage${if (n == 1) "" else "s"} · $files file${if (files == 1) "" else "s"}"
+                val ttip = "<html>" + StringUtil.escapeXmlEntities("${t.str("label")}@${r.str("alias")}") +
+                    (if (broken) "<br>Not found. Opens the first call." else "<br>Used $uses in this project") + "</html>"
+                node.add(DefaultMutableTreeNode(Item(t.str("label"), if (broken) "$uses · not found" else uses,
+                    if (broken) AllIcons.General.Error else AllIcons.FileTypes.Yaml, ttip, error = broken,
+                    open = { if (broken) service.openFile(t.str("refFile"), t.int("refLine")) else service.openFile(t.str("filePath")) })))
+            }
+            if (decls.isNotEmpty()) {
+                val group = DefaultMutableTreeNode(Item("Declared in", "${decls.size} file${if (decls.size == 1) "" else "s"}", AllIcons.Nodes.Folder,
+                    "Files whose resources.repositories declares this repository"))
+                for (d in decls) {
+                    group.add(DefaultMutableTreeNode(Item(d.str("relativePath"), "line ${d.int("line") + 1}", AllIcons.FileTypes.Yaml,
+                        open = { service.openFile(d.str("filePath"), d.int("line")) })))
+                }
+                node.add(group)
+            }
             root.add(node)
         }
     }
@@ -573,6 +610,14 @@ class StatsPanel(project: Project) : ServerTreePanel(project) {
             "file" -> GraphPanel.show(project) { it.focusFile(row.str("filePath")) }
             "repo" -> GraphPanel.show(project) { it.showFiltered(repo = row.str("repo")) }
             "problems" -> GraphPanel.show(project) { it.showFiltered(problems = true) }
+            "kind" -> GraphPanel.show(project) { g -> g.showFiltered(kinds = row.get("kinds").arr().map { it.asString }) }
+        }
+    }
+
+    private fun openView(view: String) {
+        when (view) {
+            "pipelines" -> showTab(project, PipelinesPanel::class.java)
+            "repositories" -> showTab(project, RepositoriesPanel::class.java)
         }
     }
 
@@ -587,8 +632,12 @@ class StatsPanel(project: Project) : ServerTreePanel(project) {
 
     /** A row, with its children (the files under a problem type) nested below it. */
     private fun rowNode(r: JsonObject): DefaultMutableTreeNode {
+        // A row opens its file; a row with children only expands (its graph is in
+        // the context menu); else the tab or graph it points at.
         val open: (() -> Unit)? = when {
             r.str("filePath").isNotEmpty() -> { { service.openFile(r.str("filePath"), r.int("line")) } }
+            r.list("children").isNotEmpty() -> null
+            r.str("view").isNotEmpty() -> { { openView(r.str("view")) } }
             r.str("focus").isNotEmpty() -> { { showInGraph(r) } }
             else -> null
         }

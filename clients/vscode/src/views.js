@@ -130,23 +130,55 @@ class RepositoriesTreeProvider extends Base {
   async getChildren(element) {
     if (element) return element.children;
     const repos = (await this.request('atn/repositories')) || [];
-    return repos.map(r => ({
-      repo: { ...r, declaredInPath: undefined },
-      children: (r.declaredIn || []).map(p => ({ declaredIn: p })),
-    }));
+    return repos.map(r => {
+      const decls = r.declarations || [];
+      const children = (r.templates || []).map(t => ({ template: t, alias: r.alias }));
+      if (decls.length) children.push({ declGroup: true, count: decls.length, children: decls.map(d => ({ declaration: d })) });
+      // declaredInPath: the file fetchRepository resolves the alias in
+      return { repo: { ...r, declaredInPath: decls.length ? decls[0].filePath : undefined }, children };
+    });
   }
 
   getTreeItem(el) {
-    if (el.declaredIn) {
-      const item = new vscode.TreeItem(el.declaredIn, vscode.TreeItemCollapsibleState.None);
+    if (el.template) {
+      const t = el.template;
+      const item = new vscode.TreeItem(t.label, vscode.TreeItemCollapsibleState.None);
+      const uses = `${t.usages} usage${t.usages === 1 ? '' : 's'} · ${t.callers} file${t.callers === 1 ? '' : 's'}`;
+      item.description = t.broken ? `${uses} · not found` : uses;
+      item.tooltip = t.broken
+        ? `${t.label}@${el.alias} can't be found. Click to go to the first call.`
+        : `${t.label}@${el.alias}\nUsed ${uses} in this workspace`;
+      item.iconPath = t.broken
+        ? new vscode.ThemeIcon('error', new vscode.ThemeColor('list.errorForeground'))
+        : new vscode.ThemeIcon('file-code');
+      item.contextValue = t.broken ? 'repoTemplate-broken' : 'repoTemplate';
+      item.command = t.filePath
+        ? { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: t.filePath }] }
+        : { command: 'azure-templates-navigator.openTemplate', title: 'Go to Call', arguments: [{ filePath: t.refFile, line: t.refLine }] };
+      return item;
+    }
+    if (el.declGroup) {
+      const item = new vscode.TreeItem('Declared in', vscode.TreeItemCollapsibleState.Collapsed);
+      item.description = `${el.count} file${el.count === 1 ? '' : 's'}`;
+      item.tooltip = 'Files whose resources.repositories declares this repository';
+      item.iconPath = new vscode.ThemeIcon('references');
+      item.contextValue = 'repoDeclarations';
+      return item;
+    }
+    if (el.declaration) {
+      const d = el.declaration;
+      const item = new vscode.TreeItem(d.relativePath, vscode.TreeItemCollapsibleState.None);
+      item.description = `line ${d.line + 1}`;
       item.iconPath = new vscode.ThemeIcon('file');
-      item.description = 'declared in';
+      item.contextValue = 'repoDeclaration';
+      item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: d.filePath, line: d.line }] };
       return item;
     }
     const r = el.repo;
     const loc = r.location || {};
-    const item = new vscode.TreeItem(r.label, vscode.TreeItemCollapsibleState.Collapsed);
-    item.description = r.detail;
+    const item = new vscode.TreeItem(r.label, el.children.length ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+    const n = (r.templates || []).length;
+    item.description = `${r.detail} · ${n} template${n === 1 ? '' : 's'} used`;
     const tip = new vscode.MarkdownString();
     tip.appendMarkdown(`**${r.name}** (@${r.alias})\n\n`);
     if (loc.url) tip.appendMarkdown(`URL: \`${loc.url}\`\n\n`);
@@ -247,7 +279,8 @@ class StatsTreeProvider extends Base {
       return item;
     }
     const r = el.row;
-    const item = new vscode.TreeItem(r.label, r.children && r.children.length
+    const hasChildren = !!(r.children && r.children.length);
+    const item = new vscode.TreeItem(r.label, hasChildren
       ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
     item.description = r.description;
     item.tooltip = r.tooltip;
@@ -256,8 +289,14 @@ class StatsTreeProvider extends Base {
       : r.kind === 'warning' || r.severity === 2 ? 'list.warningForeground' : undefined;
     item.iconPath = color ? new vscode.ThemeIcon(id, new vscode.ThemeColor(color)) : new vscode.ThemeIcon(id);
     item.contextValue = r.focus ? `stat-${r.focus}` : 'stat';
+    // A click goes to the row's file; a row with children only expands (its
+    // graph stays in the context menu); else the view or graph it points at.
     if (r.filePath) {
       item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: r.filePath, line: r.line }] };
+    } else if (hasChildren) {
+      // expand only
+    } else if (r.view) {
+      item.command = { command: `azure-templates-navigator.${r.view}View.focus`, title: 'Open View' };
     } else if (r.focus) {
       item.command = { command: 'azure-templates-navigator.showInGraph', title: 'Show in Graph', arguments: [el] };
     }

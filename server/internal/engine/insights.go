@@ -338,21 +338,26 @@ func setOf(xs []string) map[string]bool {
 // ---------------------------------------------------------------------------
 
 // StatRow is one line of the Stats view. Clients render Label/Description/
-// Tooltip as-is and use Focus to decide what "Show in Graph" does:
-// "file" (scope the graph to FilePath), "repo" (filter by Repo) or
+// Tooltip as-is. Clicking a row opens FilePath at Line; else, a row with
+// Children only expands; else it opens the view named by View, or the graph
+// as Focus says. Focus is also what "Show in Graph" does: "file" (scope the
+// graph to FilePath), "repo" (filter by Repo), "kind" (filter by Kinds) or
 // "problems" (problems only).
 type StatRow struct {
-	Label       string `json:"label"`
-	Description string `json:"description,omitempty"`
-	Tooltip     string `json:"tooltip,omitempty"`
-	Kind        string `json:"kind"` // pipeline|template|external|missing|repo|error|warning|info
-	FilePath    string `json:"filePath,omitempty"`
-	Repo        string `json:"repo,omitempty"`
-	Focus       string `json:"focus,omitempty"`
-	Value       int    `json:"value"`
-	Severity    int    `json:"severity,omitempty"`
-	Line        int    `json:"line,omitempty"` // 0-based line to open FilePath at
-	// Children: rows shown under this one (files with a problem type).
+	Label       string   `json:"label"`
+	Description string   `json:"description,omitempty"`
+	Tooltip     string   `json:"tooltip,omitempty"`
+	Kind        string   `json:"kind"` // pipeline|template|external|missing|repo|error|warning|info
+	FilePath    string   `json:"filePath,omitempty"`
+	Repo        string   `json:"repo,omitempty"`
+	Focus       string   `json:"focus,omitempty"`
+	Kinds       []string `json:"kinds,omitempty"` // graph kind filter for Focus "kind"
+	View        string   `json:"view,omitempty"`  // pipelines|repositories: the client view a click opens
+	Value       int      `json:"value"`
+	Severity    int      `json:"severity,omitempty"`
+	Line        int      `json:"line,omitempty"` // 0-based line to open FilePath at
+	// Children: rows shown under this one (files with a problem type, the
+	// broken references, ...).
 	Children []StatRow `json:"children,omitempty"`
 }
 
@@ -435,6 +440,7 @@ func (e *Engine) Stats() []StatSection {
 	var pipelines, templates int
 	var errors, warnings, errFiles, warnFiles int
 	byCode := map[string]*codeStat{}
+	firstErr, firstWarn := map[string]int{}, map[string]int{}
 	for _, p := range files {
 		f := e.file(p)
 		if f == nil {
@@ -443,6 +449,13 @@ func (e *Engine) Stats() []StatSection {
 		for _, dg := range e.diagnose(p) {
 			if dg.Severity != SevError && dg.Severity != SevWarning {
 				continue
+			}
+			first := firstWarn
+			if dg.Severity == SevError {
+				first = firstErr
+			}
+			if _, ok := first[p]; !ok {
+				first[p] = dg.Line
 			}
 			cs := byCode[dg.Code]
 			if cs == nil {
@@ -489,14 +502,17 @@ func (e *Engine) Stats() []StatSection {
 		}
 	}
 	overview := StatSection{ID: "overview", Label: "Overview", Rows: []StatRow{
-		{Label: "Pipelines", Description: fmt.Sprint(pipelines), Value: pipelines, Kind: "pipeline"},
-		{Label: "Templates", Description: fmt.Sprint(templates), Value: templates, Kind: "template", Tooltip: "Templates in this workspace"},
-		{Label: "External templates", Description: fmt.Sprint(external), Value: external, Kind: "external", Tooltip: "Templates used from other repositories"},
-		{Label: "Repositories", Description: fmt.Sprint(len(repoSet)), Value: len(repoSet), Kind: "repo", Tooltip: "Repositories templates are used from"},
-		{Label: "Errors", Description: fmt.Sprintf("%d in %s", errors, count(errFiles, "file")), Value: errors, Kind: "error", Focus: "problems"},
-		{Label: "Warnings", Description: fmt.Sprintf("%d in %s", warnings, count(warnFiles, "file")), Value: warnings, Kind: "warning", Focus: "problems"},
-		{Label: "Broken references", Description: fmt.Sprint(broken), Value: broken, Kind: "missing", Focus: "problems",
-			Tooltip: "Template references that point to a missing file, an undeclared alias or an unavailable repository"},
+		{Label: "Pipelines", Description: fmt.Sprint(pipelines), Value: pipelines, Kind: "pipeline", View: "pipelines",
+			Focus: "kind", Kinds: []string{"pipeline"}, Tooltip: "Pipelines in this workspace. Click to see whether each one will run."},
+		{Label: "Templates", Description: fmt.Sprint(templates), Value: templates, Kind: "template",
+			Focus: "kind", Kinds: []string{"template"}, Tooltip: "Templates in this workspace. Click to show them in the graph."},
+		{Label: "External templates", Description: fmt.Sprint(external), Value: external, Kind: "external",
+			Focus: "kind", Kinds: []string{"external"}, Tooltip: "Templates used from other repositories. Click to show them in the graph."},
+		{Label: "Repositories", Description: fmt.Sprint(len(repoSet)), Value: len(repoSet), Kind: "repo", View: "repositories",
+			Tooltip: "Repositories templates are used from. Click to open the Repositories view."},
+		problemFilesRow("Errors", "error", SevError, errors, firstErr, pc, func(c problemCount) int { return c.errors }, fileRow, e),
+		problemFilesRow("Warnings", "warning", SevWarning, warnings, firstWarn, pc, func(c problemCount) int { return c.warnings }, fileRow, e),
+		e.brokenRow(broken, ids, func(id string) bool { return targets[id].kind == "missing" }),
 	}}
 
 	byType := e.problemsByType(byCode, fileRow)
@@ -683,6 +699,83 @@ func (e *Engine) Stats() []StatSection {
 	return []StatSection{overview, byType, mostUsed, misCalled, fanOut, unused, byRepo}
 }
 
+// problemFilesRow is an Overview row (Errors, Warnings) that expands to the
+// files with that severity, most first; a file opens at its first one.
+func problemFilesRow(label, kind string, sev, n int, first map[string]int, pc map[string]problemCount,
+	of func(problemCount) int, fileRow func(path, kind string) StatRow, e *Engine) StatRow {
+	paths := make([]string, 0, len(first))
+	for p := range first {
+		paths = append(paths, p)
+	}
+	sort.Slice(paths, func(i, j int) bool {
+		a, b := of(pc[paths[i]]), of(pc[paths[j]])
+		if a != b {
+			return a > b
+		}
+		return paths[i] < paths[j]
+	})
+	r := StatRow{Label: label, Description: fmt.Sprintf("%d in %s", n, count(len(paths), "file")), Value: n, Kind: kind, Focus: "problems",
+		Tooltip: fmt.Sprintf("Files with %ss, most first. Click one to go to its first %s.", kind, kind)}
+	for i, p := range paths {
+		if i == statTypeFilesMax {
+			r.Children = append(r.Children, StatRow{Label: fmt.Sprintf("and %s more", count(len(paths)-i, "file")), Kind: "info"})
+			break
+		}
+		fr := fileRow(p, "template")
+		if f := e.file(p); f != nil && f.isPipeline {
+			fr.Kind = "pipeline"
+		}
+		fr.Value, fr.Line, fr.Severity = of(pc[p]), first[p], sev
+		fr.Description = fmt.Sprint(of(pc[p]))
+		if dir := filepath.ToSlash(filepath.Dir(e.relPath(p))); dir != "." {
+			fr.Description += " · " + dir
+		}
+		r.Children = append(r.Children, fr)
+	}
+	disambiguate(e, r.Children)
+	return r
+}
+
+// brokenRow is the Overview's "Broken references": one child per call site
+// that points to a missing file, an undeclared alias or an unavailable
+// repository, labelled with the reference and opening at it.
+func (e *Engine) brokenRow(n int, ids []string, broken func(id string) bool) StatRow {
+	r := StatRow{Label: "Broken references", Description: fmt.Sprint(n), Value: n, Kind: "missing", Focus: "problems",
+		Tooltip: "Template references that point to a missing file, an undeclared alias or an unavailable repository. Click one to go to it."}
+	bad := map[string]bool{}
+	for _, id := range ids {
+		if broken(id) {
+			bad[id] = true
+		}
+	}
+	if len(bad) == 0 {
+		return r
+	}
+	shown := 0
+	for _, p := range e.workspaceFiles() {
+		for _, ed := range e.forward[p] {
+			if !bad[targetID(ed)] {
+				continue
+			}
+			if shown == statTypeFilesMax {
+				r.Children = append(r.Children, StatRow{Label: fmt.Sprintf("and %d more", n-shown), Kind: "info"})
+				return r
+			}
+			shown++
+			why := "Template not found"
+			switch ed.res.Kind {
+			case KindUnknownAlias:
+				why = "Repository alias @" + ed.res.Alias + " is not declared"
+			case KindRepoUnavailable:
+				why = "Repository " + ed.res.Repo.Name + " is not available"
+			}
+			r.Children = append(r.Children, StatRow{Label: ed.ref.Ref, Kind: "missing", FilePath: p, Line: ed.ref.Line, Severity: SevError,
+				Description: fmt.Sprintf("%s:%d", e.relPath(p), ed.ref.Line+1), Tooltip: why + "\nCalled from " + e.relPath(p) + fmt.Sprintf(":%d", ed.ref.Line+1)})
+		}
+	}
+	return r
+}
+
 // codeStat counts one diagnostic code over the workspace.
 type codeStat struct {
 	n     int
@@ -772,15 +865,71 @@ func (e *Engine) problemsByType(byCode map[string]*codeStat, fileRow func(path, 
 	return sec
 }
 
-// disambiguate labels rows that share a file name with their relative path.
+// disambiguate labels rows that share a file name with the shortest end of
+// their relative path that tells them apart ("build/template.yml").
 func disambiguate(e *Engine, rows []StatRow) {
 	n := map[string]int{}
 	for _, r := range rows {
 		n[r.Label]++
 	}
-	for i, r := range rows {
+	var paths []string
+	for _, r := range rows {
 		if n[r.Label] > 1 && r.FilePath != "" {
-			rows[i].Label = filepath.ToSlash(e.relPath(r.FilePath))
+			paths = append(paths, e.relPath(r.FilePath))
 		}
 	}
+	short := uniqueSuffixes(paths)
+	for i, r := range rows {
+		if n[r.Label] > 1 && r.FilePath != "" {
+			rows[i].Label = short[e.relPath(r.FilePath)]
+		}
+	}
+}
+
+// uniqueSuffixes maps each slash-separated path to its shortest ending
+// (whole segments) that no other path in the list ends with: the file name
+// when it is unique, else as many parent folders as it takes. It counts the
+// endings of each length once, so a workspace of a thousand template.yml
+// costs a thousand times their depth, not a million comparisons.
+func uniqueSuffixes(paths []string) map[string]string {
+	segs := map[string][]string{}
+	byName := map[string][]string{}
+	for _, p := range paths {
+		if _, ok := segs[p]; ok {
+			continue
+		}
+		s := strings.Split(filepath.ToSlash(p), "/")
+		segs[p] = s
+		byName[s[len(s)-1]] = append(byName[s[len(s)-1]], p)
+	}
+	suffix := func(s []string, k int) string {
+		if k > len(s) {
+			k = len(s)
+		}
+		return strings.Join(s[len(s)-k:], "/")
+	}
+	out := map[string]string{}
+	for _, group := range byName {
+		left := group
+		for k := 1; len(left) > 0; k++ {
+			n := map[string]int{}
+			deepest := 0
+			for _, q := range group {
+				n[suffix(segs[q], k)]++
+				if len(segs[q]) > deepest {
+					deepest = len(segs[q])
+				}
+			}
+			var next []string
+			for _, p := range left {
+				if sx := suffix(segs[p], k); n[sx] == 1 || k >= deepest {
+					out[p] = sx
+				} else {
+					next = append(next, p)
+				}
+			}
+			left = next
+		}
+	}
+	return out
 }

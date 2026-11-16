@@ -8,12 +8,15 @@
 //   IntelliJ: the host defines window.atnHost = { postMessage(msg) } before
 //             this script runs and delivers replies via window.postMessage.
 // Host → webview messages: graphData | searchData | noWorkspace | error |
-//                          fit | setFullPath
+//                          fit | setFullPath | select
 // Webview → host messages: ready | setFileScope | setDepth | setDirection |
 //                          setFilter | focusFile | openFile | openFileBeside |
 //                          copyPath | expand | contextMenu
 // graphData carries the node/edge totals, the filter facets and the current
-// filter ({problemsOnly, kinds, repos}) and direction, which the host owns.
+// filter ({problemsOnly, kinds, repos}) and direction, which the host owns,
+// and activeFile: in workspace scope, that file's node starts selected.
+// select {filePath} selects and centres a node (the active editor changed
+// while the graph is not file-scoped).
 // ---------------------------------------------------------------------------
 const vscode = window.atnHost
   || (typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : { postMessage() {} });
@@ -39,6 +42,12 @@ let graphDirection = 'both'; // file scope: both | callers | callees
 /** Filter state, owned by the host and echoed back in graphData. */
 let filter = { problemsOnly: false, kinds: [], repos: [] };
 let facets = { kinds: {}, problems: 0, repos: [] };
+/** The selected node: it and everything that leads to it or from it stay lit. */
+let selectedId = null;
+/** The current render's d3 selections, for selection changes between renders. */
+let currentSel = null;
+/** A node selected while the layout still moves: centred once it settles. */
+let centreWhenSettled = null;
 
 /** @type {Array<{filePath:string,filename:string,relativePath:string,directory:string}>} */
 let searchIndex = [];        // all workspace YAML files for the search bar
@@ -411,7 +420,18 @@ function updateScopeBadge() {
 /** Centres the view on the current file's node and pulses it again. */
 function centreOnFocal() {
   const node = allNodes.find(n => n.filePath === scopedFilePath);
-  if (!node || node.x == null || !isFinite(node.x)) return;
+  if (!centreOn(node)) return;
+  const pulse = nodesLayer.querySelector('g.node.focal .focal-pulse');
+  if (pulse) {
+    pulse.classList.remove('run');
+    pulse.getBoundingClientRect(); // restart the animation
+    pulse.classList.add('run');
+  }
+}
+
+/** Centres the view on a node; false when it has no position yet. */
+function centreOn(node) {
+  if (!node || node.x == null || !isFinite(node.x)) return false;
   const w = svgEl.clientWidth || 600;
   const h = svgEl.clientHeight || 500;
   const k = Math.max(d3.zoomTransform(svgEl).k, 1);
@@ -419,12 +439,7 @@ function centreOnFocal() {
     zoom.transform,
     d3.zoomIdentity.translate(w / 2 - k * node.x, h / 2 - k * node.y).scale(k)
   );
-  const pulse = nodesLayer.querySelector('g.node.focal .focal-pulse');
-  if (pulse) {
-    pulse.classList.remove('run');
-    pulse.getBoundingClientRect(); // restart the animation
-    pulse.classList.add('run');
-  }
+  return true;
 }
 
 scopeBadge.addEventListener('click', (event) => {
@@ -435,7 +450,10 @@ scopeBadge.addEventListener('click', (event) => {
 function updateCounts(shownNodes, shownEdges, totalNodes, totalEdges) {
   const n = shownNodes === totalNodes ? `${totalNodes} nodes` : `${shownNodes} of ${totalNodes} nodes`;
   const e = shownEdges === totalEdges ? `${totalEdges} edges` : `${shownEdges} of ${totalEdges} edges`;
-  countsEl.textContent = `${n} · ${e}`;
+  // Name the scope: a workspace graph doesn't follow the editor, which is
+  // easy to forget after "Show in Graph" switched to it.
+  const scope = fileScopeEnabled ? '' : (isFiltered() ? 'Workspace, filtered · ' : 'Workspace · ');
+  countsEl.textContent = `${scope}${n} · ${e}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -479,7 +497,23 @@ function nodeLabel(d) {
  */
 function updateNodeLabels() {
   d3.select(nodesLayer).selectAll('g.node').select('text.label')
-    .text(d => truncate(nodeLabel(d), showFullPath ? 40 : 24));
+    .text(d => labelText(d));
+}
+
+/** A node's label, shortened; paths lose leading folders so the file name stays. */
+function labelText(d) {
+  const s = nodeLabel(d);
+  // A label with folders is already the shortest that tells it apart from
+  // same-named files (the engine picks it), so it gets more room.
+  const max = showFullPath || s.includes('/') ? 40 : 24;
+  if (s.length <= max) return s;
+  const parts = s.split('/');
+  while (parts.length > 1) {
+    parts.shift();
+    const t = '…/' + parts.join('/');
+    if (t.length <= max) return t;
+  }
+  return truncate(parts[0], max);
 }
 
 // ---------------------------------------------------------------------------
@@ -582,6 +616,14 @@ window.addEventListener('message', (event) => {
       // Track the focal file for upstream/downstream colouring
       scopedFilePath = msg.scopedFile || null;
 
+      // In workspace scope the active editor's file starts selected; a file
+      // scope already marks it as the current file.
+      selectedId = null;
+      centreWhenSettled = null; // a new graph is fitted, not centred
+      if (!fileScopeEnabled && msg.activeFile) {
+        const sel = (msg.nodes || []).find(n => n.filePath === msg.activeFile);
+        if (sel) selectedId = sel.id;
+      }
       renderGraph(msg.nodes, msg.edges, msg.scopedFile);
       updateScopeBadge();
       updateCounts((msg.nodes || []).length, (msg.edges || []).length,
@@ -590,6 +632,9 @@ window.addEventListener('message', (event) => {
       break;
     case 'fit':
       fitView();
+      break;
+    case 'select':
+      selectFile(msg.filePath, true);
       break;
     case 'setFullPath':
       showFullPath = !!msg.enabled;
@@ -872,6 +917,12 @@ function renderGraph(nodes, edges, scopedFile) {
     .attr('pointer-events', 'none')
     .text('CURRENT FILE');
 
+  // Selection ring, shown on the selected node (g.node.selected).
+  nodeGroup.append('circle')
+    .attr('class', 'select-ring')
+    .attr('r', d => radius(d) + 5)
+    .attr('pointer-events', 'none');
+
   // Context nodes (callers kept only to show who uses a filtered node) are faded.
   nodeGroup.style('opacity', d => d.context ? 0.45 : 1);
 
@@ -912,13 +963,15 @@ function renderGraph(nodes, edges, scopedFile) {
     .attr('font-size', 10)
     .attr('fill', 'var(--vscode-editor-foreground)')
     .attr('pointer-events', 'none')
-    .text(d => truncate(nodeLabel(d), showFullPath ? 40 : 24));
+    .text(d => labelText(d));
 
   // ── Interactions ──────────────────────────────────────────────────────────
   nodeGroup
     .on('click', (event, d) => {
       event.stopPropagation();
       hideCtxMenu();
+      selectedId = d.id;
+      applySelection();
       if (d.filePath && d.kind !== 'missing' && d.kind !== 'unknown') {
         vscode.postMessage({ type: 'openFile', filePath: d.filePath });
       }
@@ -938,15 +991,19 @@ function renderGraph(nodes, edges, scopedFile) {
     })
     .on('mousemove', (event) => moveNodeTip(event))
     .on('mouseout', () => {
-      resetHighlight(edgeSel, nodeGroup);
+      applySelection();
       hideNodeTip();
     });
 
-  // Click on background → dismiss context menu
+  // Click on background → clear the selection, dismiss context menu
   svg.on('click', () => {
-    resetHighlight(edgeSel, nodeGroup);
+    selectedId = null;
+    applySelection();
     hideCtxMenu();
   });
+
+  currentSel = { edgeSel, nodeGroup };
+  applySelection();
 
   // ── Tick function ──────────────────────────────────────────────────────────
   // Edges run between circle rims so arrowheads aren't hidden under big nodes
@@ -979,7 +1036,12 @@ function renderGraph(nodes, edges, scopedFile) {
 
   // Fit early (nodes are roughly in place after ~800 ms) and again when fully settled
   setTimeout(() => fitView(), 800);
-  simulation.on('end', () => fitView());
+  // When the layout settles: fit it, or centre a node selected meanwhile.
+  simulation.on('end', () => {
+    const node = centreWhenSettled && allNodes.find(n => n.id === centreWhenSettled);
+    centreWhenSettled = null;
+    if (node) centreOn(node); else fitView();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,6 +1120,74 @@ function highlightNeighbours(d, edgeSel, nodeGroup) {
     });
 
   nodeGroup.style('opacity', n => connectedIds.has(n.id) ? 1 : 0.12);
+}
+
+function edgeEnds(e) {
+  return [typeof e.source === 'object' ? e.source.id : e.source, typeof e.target === 'object' ? e.target.id : e.target];
+}
+
+/** Everything that reaches id (up) and everything id reaches (down), over the drawn edges. */
+function lineage(id) {
+  const fwd = new Map();
+  const back = new Map();
+  for (const e of allEdges) {
+    const [s, t] = edgeEnds(e);
+    if (!fwd.has(s)) fwd.set(s, []);
+    if (!back.has(t)) back.set(t, []);
+    fwd.get(s).push(t);
+    back.get(t).push(s);
+  }
+  const walk = adj => {
+    const seen = new Set([id]);
+    const stack = [id];
+    while (stack.length) {
+      for (const m of adj.get(stack.pop()) || []) {
+        if (!seen.has(m)) { seen.add(m); stack.push(m); }
+      }
+    }
+    return seen;
+  };
+  return { up: walk(back), down: walk(fwd) };
+}
+
+/**
+ * Lights the selected node with its whole lineage (the pipelines and
+ * templates that lead to it, and what it pulls in) and dims the rest; with
+ * no selection, the normal look. Hovering still shows direct neighbours.
+ */
+function applySelection() {
+  if (!currentSel) return;
+  const { edgeSel, nodeGroup } = currentSel;
+  if (selectedId && !allNodes.some(n => n.id === selectedId)) selectedId = null;
+  nodeGroup.classed('selected', n => n.id === selectedId);
+  if (!selectedId) {
+    resetHighlight(edgeSel, nodeGroup);
+    return;
+  }
+  const { up, down } = lineage(selectedId);
+  const onPath = e => {
+    const [s, t] = edgeEnds(e);
+    return (up.has(s) && up.has(t)) || (down.has(s) && down.has(t));
+  };
+  edgeSel
+    .attr('stroke-opacity', e => onPath(e) ? 1 : 0.05)
+    .attr('stroke-width', e => onPath(e) ? 2.5 : 1.5);
+  nodeGroup.style('opacity', n => up.has(n.id) || down.has(n.id) ? 1 : 0.12);
+}
+
+/**
+ * Selects the node of filePath (if drawn) and centres on it, unless it was
+ * selected already: a click selects a node and opens its file, and the host
+ * echoes that file back, which must not pan and zoom the graph.
+ */
+function selectFile(filePath, centre) {
+  const node = filePath ? allNodes.find(n => n.filePath === filePath) : null;
+  const already = !!node && node.id === selectedId;
+  selectedId = node ? node.id : null;
+  applySelection();
+  if (!node || !centre || already) return;
+  centreOn(node);
+  if (simulation && simulation.alpha() > simulation.alphaMin()) centreWhenSettled = node.id;
 }
 
 function resetHighlight(edgeSel, nodeGroup) {

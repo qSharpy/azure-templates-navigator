@@ -266,6 +266,7 @@ async function activate(context) {
       const row = nodeArg(a);
       if (row.focus === 'repo') graph.showFiltered({ repos: [row.repo] });
       else if (row.focus === 'problems') graph.showFiltered({ problemsOnly: true });
+      else if (row.focus === 'kind') graph.showFiltered({ kinds: row.kinds || [] });
       else if (row.filePath) graph.focusFile(row.filePath);
       else return;
       await vscode.commands.executeCommand(`${SECTION}.graphView.focus`);
@@ -364,7 +365,7 @@ async function activate(context) {
   onEditor(vscode.window.activeTextEditor);
   refreshViews();
   // For the E2E test.
-  return { request, graph, stats, pipelines };
+  return { request, graph, stats, pipelines, repositories };
 }
 
 async function deactivate() {

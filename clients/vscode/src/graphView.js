@@ -21,9 +21,14 @@ class GraphViewProvider {
     this.focusUri = undefined; // "Focus graph here": overrides the active editor until it changes
   }
 
-  /** Scope the graph to a file (from the node menu or the Stats view). */
+  /**
+   * Scope the graph to a file (from the node menu or the Stats view). Filters
+   * set by an earlier "Show in Graph" are cleared, so the file's whole
+   * neighbourhood shows, as its usage counts promise.
+   */
   focusFile(filePath) {
     this.fileScope = true;
+    this.filter = { problemsOnly: false, kinds: [], repos: [] };
     this.focusUri = vscode.Uri.file(filePath);
     this.refresh();
   }
@@ -44,7 +49,9 @@ class GraphViewProvider {
     const changed = !this.activeUri || this.activeUri.toString() !== uri.toString();
     this.activeUri = uri;
     if (changed) this.focusUri = undefined;
-    if (changed && this.fileScope) this.refresh();
+    if (!changed) return;
+    if (this.fileScope) this.refresh();
+    else for (const w of this.webviews) w.postMessage({ type: 'select', filePath: uri.fsPath });
   }
 
   refresh() {
@@ -138,6 +145,7 @@ class GraphViewProvider {
       direction: this.direction,
       fileScopeEnabled: this.fileScope,
       scopedFile: focus ? focus.fsPath : null,
+      activeFile: this.activeUri ? this.activeUri.fsPath : null,
       graphDepth: this.depth,
     };
     this._last = msg;
