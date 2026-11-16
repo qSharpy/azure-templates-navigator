@@ -1,0 +1,7 @@
+# Blank issues stay enabled: the IDEs' "Report Issue…" commands open
+# issues/new with a pre-filled title and body, which needs them.
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/qSharpy/azure-templates-navigator#readme
+    about: Features, settings, the atn CLI and how templates from other repositories are fetched.

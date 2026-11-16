@@ -10,6 +10,10 @@
     "type": "git",
     "url": "https://github.com/qSharpy/azure-templates-navigator.git"
   },
+  "bugs": {
+    "url": "https://github.com/qSharpy/azure-templates-navigator/issues"
+  },
+  "homepage": "https://github.com/qSharpy/azure-templates-navigator#readme",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -215,6 +219,12 @@
         "command": "azure-templates-navigator.showOutput",
         "title": "Show Log",
         "category": "Azure Templates"
+      },
+      {
+        "command": "azure-templates-navigator.reportIssue",
+        "title": "Report Issue…",
+        "category": "Azure Templates",
+        "icon": "$(report)"
       }
     ],
     "viewsContainers": {
@@ -293,6 +303,11 @@
           "command": "azure-templates-navigator.refresh",
           "when": "view == azure-templates-navigator.repositoriesView",
           "group": "navigation@9"
+        },
+        {
+          "command": "azure-templates-navigator.reportIssue",
+          "when": "view == azure-templates-navigator.templateTree",
+          "group": "z_help@9"
         }
       ],
       "view/item/context": [

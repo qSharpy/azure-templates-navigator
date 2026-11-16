@@ -56,9 +56,21 @@ async function run() {
 
   // 6. commands registered
   const all = await vscode.commands.getCommands(true);
-  for (const c of ['searchTemplates', 'searchParameters', 'fetchRepository', 'fetchAllRepositories', 'refresh', 'expandTemplateGraph', 'showUsages']) {
+  for (const c of ['searchTemplates', 'searchParameters', 'fetchRepository', 'fetchAllRepositories', 'refresh', 'expandTemplateGraph', 'showUsages', 'reportIssue']) {
     assert.ok(all.includes(`azure-templates-navigator.${c}`), c);
   }
+  // 6b. Report Issue: a pre-filled GitHub URL with versions and nothing local
+  const issue = await vscode.commands.executeCommand('azure-templates-navigator.reportIssue', { kind: 'bug', open: false });
+  const q = new URL(issue).searchParams;
+  console.log('issue url:', issue.length, 'chars;', q.get('body').split('\n').filter(l => l.startsWith('- ')).join(' | '));
+  console.log('issue url survives Uri.parse:', vscode.Uri.parse(issue).toString() === issue);
+  assert.ok(issue.startsWith('https://github.com/qSharpy/azure-templates-navigator/issues/new?'));
+  assert.strictEqual(q.get('labels'), 'bug');
+  assert.ok(q.get('body').includes('### What happened?'));
+  assert.ok(/- atn \d+\.\d+\.\d+/.test(q.get('body')), 'atn version from the running server');
+  assert.ok(!q.get('body').includes(root), 'no workspace paths in the issue');
+  const feature = new URL(await vscode.commands.executeCommand('azure-templates-navigator.reportIssue', { kind: 'feature', open: false }));
+  assert.strictEqual(feature.searchParams.get('labels'), 'enhancement');
   // 7. navigation on an extends: template — usages lens, references, outline
   const base = vscode.Uri.file(path.join(root, 'extends/platform-templates/pipelines/secure-base.yml'));
   await vscode.workspace.openTextDocument(base);

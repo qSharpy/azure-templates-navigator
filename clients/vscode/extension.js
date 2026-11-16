@@ -9,11 +9,13 @@
 // This file only wires the server to VS Code UI.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 const { LanguageClient, State } = require('vscode-languageclient/node');
 const { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider } = require('./src/views');
 const { GraphViewProvider } = require('./src/graphView');
+const { issueUrl } = require('./src/issue');
 
 const SECTION = 'azure-templates-navigator';
 
@@ -257,6 +259,34 @@ async function activate(context) {
       refreshViews();
     },
     showOutput: () => output.show(),
+    // Opens a pre-filled GitHub issue. {kind: 'bug'|'feature'} skips the
+    // picker; {open: false} only returns the URL (used by the E2E test).
+    reportIssue: async (a = {}) => {
+      let kind = a.kind;
+      if (!kind) {
+        const pick = await vscode.window.showQuickPick([
+          { label: '$(bug) Report a bug', description: 'Something doesn\'t work as expected', kind: 'bug' },
+          { label: '$(lightbulb) Suggest a feature or give feedback', kind: 'feature' },
+        ], { placeHolder: 'Opens a new issue on GitHub, with your versions filled in' });
+        if (!pick) return undefined;
+        kind = pick.kind;
+      }
+      // Works without a running server: that is often when people report.
+      const info = await Promise.race([request('atn/info'), new Promise(r => setTimeout(r, 2000))]);
+      const ext = vscode.extensions.getExtension(`bogdanbujor.${SECTION}`);
+      const url = issueUrl(kind, {
+        environment: [
+          `Azure Templates Navigator ${ext ? ext.packageJSON.version : 'unknown'}`,
+          `atn ${(info && info.version) || 'unknown (server not running)'}`,
+          `${vscode.env.appName} ${vscode.version}`,
+          `${os.type()} ${os.release()} ${os.arch()}`,
+        ],
+      });
+      // A string, not Uri.parse(url): Uri re-encodes the query and would
+      // turn the body's own '&' and '=' into parameter separators.
+      if (a.open !== false) await vscode.env.openExternal(url);
+      return url;
+    },
   };
   for (const [name, fn] of Object.entries(commands)) {
     context.subscriptions.push(vscode.commands.registerCommand(`${SECTION}.${name}`, fn));

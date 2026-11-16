@@ -97,6 +97,7 @@ Each feature is computed once by `atn` and shown through the IDE's own UI.
 | Jump to the referenced template | Ctrl/Cmd+click, or the gutter icon on `template:` | Ctrl/Cmd+click |
 | Problems and fixes | Inspections + Alt+Enter; Diagnostics tab | Problems view + quick fixes |
 | Template graph | Graph tab (IntelliJ toolbar and menus) | Graph panel |
+| Report a bug or an idea | *Help → Report Azure Templates Navigator Issue…*; *Report to Azure Templates Navigator* in the IDE error dialog | *Azure Templates: Report Issue…* (command palette, ⋯ menu of the Templates view); *Help → Report Issue* |
 
 ## Settings (identical in both IDEs)
 
@@ -141,6 +142,19 @@ atn version
 
 The download URL assumes the binaries from `dist/release/` are attached to a GitHub release of the repo you publish this from.
 In CI the checkout already has credentials for Azure Repos via `System.AccessToken`. For other private repos, set `repositories.urls` with a token-bearing URL, or run `git config --global url."https://x:$(TOKEN)@github.com/".insteadOf https://github.com/` first.
+
+## Reporting problems and feedback
+
+Bugs, ideas and feedback go to [GitHub Issues](https://github.com/qSharpy/azure-templates-navigator/issues/new/choose).
+The quickest way is from the IDE, which opens a new issue with the extension, `atn`, IDE and OS versions filled in:
+
+- **VS Code:** *Azure Templates: Report Issue…* in the command palette, or the ⋯ menu of the Templates view.
+- **IntelliJ:** *Help → Report Azure Templates Navigator Issue…*. When the plugin throws an exception, IntelliJ's
+  error dialog offers *Report to Azure Templates Navigator*, which adds the stack trace to the issue.
+
+Nothing is sent until you submit the issue on GitHub, so check it for anything private first. A bug report is
+most useful with the smallest YAML that shows the problem and the log: *Azure Templates: Show Log* in VS Code,
+lines starting with `[atn]` in IntelliJ's *Help → Show Log*, or the output of `atn check`.
 
 ## Building
 

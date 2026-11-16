@@ -1,0 +1,26 @@
+name: Feature request or feedback
+description: An idea, a missing check, or anything you'd like to tell us.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: What you're trying to do, and what would make it easier. Feedback on what already exists is welcome too.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example
+      description: A YAML snippet, a screenshot, or how another tool does it. Optional.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Which part?
+      multiple: true
+      options:
+        - VS Code
+        - IntelliJ / JetBrains IDE
+        - atn CLI
+        - All of them

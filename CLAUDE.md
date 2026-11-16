@@ -32,12 +32,14 @@ If you find yourself writing YAML parsing or template logic in JS or Kotlin, sto
   - `window.atnHost.nativeChrome = true` (IntelliJ) hides the page's own search bar and toolbar, and sends `contextMenu` instead of drawing a menu. The host provides those natively.
 - **`clients/vscode`**: plain JS with `vscode-languageclient`.
   - `extension.js`: client and commands. `src/views.js`: tree providers. `src/graphView.js`: the webview.
+  - `src/issue.js`: the pre-filled GitHub issue URL behind `reportIssue`.
   - `scripts/copy-assets.js` copies `shared/webview` → `media/` and `dist/bin` → `bin/`. Both are generated, so don't edit them.
 - **`clients/intellij`**: Kotlin with LSP4IJ.
   - `lsp/AtnLsp.kt`: factory, connection, client and binary lookup. `AtnService.kt`: requests and the change topic. `settings/`, `ui/` (tool window tabs, JCEF graph, actions).
   - `ui/Navigation.kt`: the native pieces (usages popup, `ShowUsagesAction`, gutter icons on `template:`, Structure view routing).
   - The look should be IntelliJ's, not a reskin of VS Code. Prefer an IntelliJ surface fed by an LSP feature (Find Usages, Call Hierarchy, Structure, Code Vision) over a custom panel. LSP4IJ registers some providers only for TEXT/TextMate, so `plugin.xml` registers them for `yaml`.
   - Code lens commands are `<commandPrefix>showUsages`. LSP4IJ runs the IntelliJ action with that id, `AzureTemplatesNavigator.showUsages`, and passes the arguments in `CommandExecutor.LSP_COMMAND`. VS Code registers `azure-templates-navigator.showUsages`.
+  - `IssueReport.kt` (URL builder, unit-tested) and `ui/ReportIssue.kt` (Help menu action, `errorHandler` for the IDE error dialog).
   - Gradle copies `shared/webview` into resources and `dist/bin` into the sandbox and zip.
 
 ## Commands
@@ -67,6 +69,7 @@ cd clients/intellij && ./gradlew runIde --args="$(cd ../../samples && pwd)"   # 
 - **Call-site parameters come in three forms:** block, flow (`parameters: { a: 1 }`, possibly multi-line) and forwarded (`parameters: ${{ parameters }}`, so `CallSite.Unknowable()`). Use `PassedParam` positions (`ValueLine`/`ValueCol`/`ValueEnd`, `DelStart`/`DelEnd` for flow), never "to the end of the line".
 - **Index freshness:** document and file events call `markDirty`, and `ensureLinked` re-links only those files. Set `e.linked = false` (full rebuild) only for changes that affect every file: settings, roots, repository state, alias declarations. `engine/incremental_test.go` checks that incremental results equal a full rebuild; extend it when adding a dependency between files.
 - **Samples:** `samples/extends/` models platform teams publishing templates and app teams extending them. Its README lists the exact expected diagnostics; keep that list in sync when adding checks.
+- **Issue reports:** both clients open `issues/new?labels=…&title=…&body=…` with a markdown body: versions and OS only, never paths, settings or workspace data. They don't use the issue forms' field ids, so `.github/ISSUE_TEMPLATE/config.yml` must keep `blank_issues_enabled: true`. Keep the two builders' body format in sync. VS Code passes the URL to `openExternal` as a string, because `Uri.parse` re-encodes the query.
 - **Versioning:** a single `VERSION` file. `build.sh` syncs it into `package.json` and `gradle.properties`.
 - **Tests for repository fetching** use `file://` URL overrides and local bare repos. No network.
 

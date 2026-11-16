@@ -1,0 +1,54 @@
+name: Bug report
+description: Something doesn't work, or works differently than you expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! The quickest way to open this form is **Report Issue…** in your IDE
+        (VS Code: *Azure Templates: Report Issue…* in the command palette; IntelliJ: *Help → Report Azure Templates Navigator Issue…*).
+        It fills in the versions for you.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      multiple: true
+      options:
+        - VS Code
+        - IntelliJ / JetBrains IDE
+        - atn CLI
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you saw, and what you expected instead. Wrong hover, false or missing diagnostic, broken navigation, crash…
+    validations:
+      required: true
+  - type: textarea
+    id: yaml
+    attributes:
+      label: YAML that shows the problem
+      description: |
+        The smallest pipeline and template that reproduce it. Remove anything private (names, URLs, secrets).
+        Mention where each file lives, e.g. `templates/build.yml` or `x.yml@templates` from another repository.
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output
+      description: |
+        VS Code: *Azure Templates: Show Log*. IntelliJ: *Help → Show Log*, lines starting with `[atn]`. CLI: the output of `atn check`.
+      render: text
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Extension or plugin version, `atn version`, IDE version and OS.
+      placeholder: |
+        Azure Templates Navigator 2.1.0 (atn 2.1.0)
+        VS Code 1.95.3
+        macOS 15.1 arm64
+    validations:
+      required: true

@@ -3,6 +3,15 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [Unreleased]
+
+### Added
+
+- **Report a bug or an idea from the IDE.** It opens a new GitHub issue with the extension, `atn`, IDE and OS versions filled in. Nothing is sent until you submit it.
+  - VS Code: *Azure Templates: Report Issue…* (command palette, ⋯ menu of the Templates view). The Marketplace page and *Help → Report Issue* link to the issue tracker too.
+  - IntelliJ: *Help → Report Azure Templates Navigator Issue…*. When the plugin throws, IntelliJ's error dialog offers *Report to Azure Templates Navigator*, with the stack trace in the issue.
+  - GitHub issue forms for bug reports and feature requests.
+
 ## [2.1.0] — 2026-11-03
 
 ### Fixed
