@@ -387,6 +387,51 @@ function updateFilterBar() {
   renderRepoMenu();
 }
 
+// ---------------------------------------------------------------------------
+// Scope badge: names the file a file-scoped graph is built around
+// ---------------------------------------------------------------------------
+const scopeBadge = document.getElementById('scope-badge');
+
+function updateScopeBadge() {
+  if (!fileScopeEnabled || !scopedFilePath) {
+    scopeBadge.classList.remove('show');
+    return;
+  }
+  const node = allNodes.find(n => n.filePath === scopedFilePath);
+  const name = scopedFilePath.split(/[\\/]/).pop();
+  scopeBadge.querySelector('.name').textContent = name;
+  const where = (node && node.relativePath) || scopedFilePath;
+  scopeBadge.title = node
+    ? `${where}\nClick to centre the graph on this file`
+    : `${where}\nNot in the graph with the current filters`;
+  scopeBadge.style.cursor = node ? 'pointer' : 'default';
+  scopeBadge.classList.add('show');
+}
+
+/** Centres the view on the current file's node and pulses it again. */
+function centreOnFocal() {
+  const node = allNodes.find(n => n.filePath === scopedFilePath);
+  if (!node || node.x == null || !isFinite(node.x)) return;
+  const w = svgEl.clientWidth || 600;
+  const h = svgEl.clientHeight || 500;
+  const k = Math.max(d3.zoomTransform(svgEl).k, 1);
+  svg.transition().duration(500).call(
+    zoom.transform,
+    d3.zoomIdentity.translate(w / 2 - k * node.x, h / 2 - k * node.y).scale(k)
+  );
+  const pulse = nodesLayer.querySelector('g.node.focal .focal-pulse');
+  if (pulse) {
+    pulse.classList.remove('run');
+    pulse.getBoundingClientRect(); // restart the animation
+    pulse.classList.add('run');
+  }
+}
+
+scopeBadge.addEventListener('click', (event) => {
+  event.stopPropagation();
+  centreOnFocal();
+});
+
 function updateCounts(shownNodes, shownEdges, totalNodes, totalEdges) {
   const n = shownNodes === totalNodes ? `${totalNodes} nodes` : `${shownNodes} of ${totalNodes} nodes`;
   const e = shownEdges === totalEdges ? `${totalEdges} edges` : `${shownEdges} of ${totalEdges} edges`;
@@ -538,6 +583,7 @@ window.addEventListener('message', (event) => {
       scopedFilePath = msg.scopedFile || null;
 
       renderGraph(msg.nodes, msg.edges, msg.scopedFile);
+      updateScopeBadge();
       updateCounts((msg.nodes || []).length, (msg.edges || []).length,
         typeof msg.totalNodes === 'number' ? msg.totalNodes : (msg.nodes || []).length,
         typeof msg.totalEdges === 'number' ? msg.totalEdges : (msg.edges || []).length);
@@ -803,16 +849,28 @@ function renderGraph(nodes, edges, scopedFile) {
         .on('end',   dragEnded)
     );
 
-  // Focal-node outer ring (only in file-scope mode for the scoped file)
-  nodeGroup.filter(d => scopedFile && d.filePath === scopedFile)
-    .append('circle')
-    .attr('r', d => radius(d) + 5)
-    .attr('fill', 'none')
-    .attr('stroke', 'var(--vscode-focusBorder, #007fd4)')
-    .attr('stroke-width', 2)
-    .attr('stroke-dasharray', '4,2')
-    .attr('opacity', 0.8)
+  // The scoped (current) file: a halo, a solid ring and a short pulse behind
+  // its circle, a tag above it and a bold label, drawn on top of the others.
+  const isFocal = d => !!scopedFile && d.filePath === scopedFile;
+  const focalSel = nodeGroup.filter(isFocal).classed('focal', true).raise();
+  focalSel.append('circle')
+    .attr('class', 'focal-halo')
+    .attr('r', d => radius(d) + 12)
     .attr('pointer-events', 'none');
+  focalSel.append('circle')
+    .attr('class', 'focal-pulse run')
+    .attr('r', d => radius(d) + 5)
+    .attr('pointer-events', 'none');
+  focalSel.append('circle')
+    .attr('class', 'focal-ring')
+    .attr('r', d => radius(d) + 5)
+    .attr('pointer-events', 'none');
+  focalSel.append('text')
+    .attr('class', 'focal-tag')
+    .attr('text-anchor', 'middle')
+    .attr('dy', d => -(radius(d) + 17))
+    .attr('pointer-events', 'none')
+    .text('CURRENT FILE');
 
   // Context nodes (callers kept only to show who uses a filtered node) are faded.
   nodeGroup.style('opacity', d => d.context ? 0.45 : 1);
@@ -848,7 +906,7 @@ function renderGraph(nodes, edges, scopedFile) {
 
   // Label below circle
   nodeGroup.append('text')
-    .attr('class', 'label')
+    .attr('class', d => isFocal(d) ? 'label focal' : 'label')
     .attr('text-anchor', 'middle')
     .attr('dy', d => radius(d) + 13)
     .attr('font-size', 10)
@@ -891,16 +949,17 @@ function renderGraph(nodes, edges, scopedFile) {
   });
 
   // ── Tick function ──────────────────────────────────────────────────────────
-  // Edges run between circle rims so arrowheads aren't hidden under big nodes.
+  // Edges run between circle rims so arrowheads aren't hidden under big nodes
+  // (or under the current file's ring).
   function rim(d, end) {
     const dx = d.target.x - d.source.x;
     const dy = d.target.y - d.source.y;
     const len = Math.hypot(dx, dy) || 1;
     if (end) {
-      const r = radius(d.target) + 2;
+      const r = radius(d.target) + (isFocal(d.target) ? 8 : 2);
       return [d.target.x - (dx / len) * r, d.target.y - (dy / len) * r];
     }
-    const r = radius(d.source);
+    const r = radius(d.source) + (isFocal(d.source) ? 6 : 0);
     return [d.source.x + (dx / len) * r, d.source.y + (dy / len) * r];
   }
 

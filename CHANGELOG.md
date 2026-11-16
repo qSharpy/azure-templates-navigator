@@ -3,6 +3,12 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [Unreleased]
+
+### Changed
+
+- **The graph shows which file it is built around.** When the graph is scoped to the current file, a *Graph of `<file>`* badge sits in the top-left corner; click it to centre the graph on that file. The file's node has a solid ring, a soft halo, a *CURRENT FILE* tag and a bold label, and it pulses briefly when the graph is drawn. Before, it only had a thin dashed ring. The legend explains the ring.
+
 ## [2.4.0] — 2026-11-16
 
 ### Added
