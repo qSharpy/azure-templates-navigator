@@ -13,7 +13,7 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 const { LanguageClient, State } = require('vscode-languageclient/node');
-const { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider, StatsTreeProvider, FeedbackTreeProvider } = require('./src/views');
+const { DependencyTreeProvider, DiagnosticsTreeProvider, PipelinesTreeProvider, RepositoriesTreeProvider, StatsTreeProvider, FeedbackTreeProvider } = require('./src/views');
 const { GraphViewProvider } = require('./src/graphView');
 const { issueUrl, REVIEW_URL } = require('./src/issue');
 
@@ -123,6 +123,7 @@ async function activate(context) {
 
   const tree = new DependencyTreeProvider(request);
   const diagnostics = new DiagnosticsTreeProvider(request);
+  const pipelines = new PipelinesTreeProvider(request);
   const repositories = new RepositoriesTreeProvider(request);
   const stats = new StatsTreeProvider(request);
   const graph = new GraphViewProvider(context, request);
@@ -133,6 +134,7 @@ async function activate(context) {
     pending = setTimeout(() => {
       tree.refresh();
       diagnostics.refresh();
+      pipelines.refresh();
       repositories.refresh();
       stats.refresh();
       graph.refresh();
@@ -141,6 +143,7 @@ async function activate(context) {
 
   const treeView = vscode.window.createTreeView(`${SECTION}.templateTree`, { treeDataProvider: tree, showCollapseAll: true });
   const diagView = vscode.window.createTreeView(`${SECTION}.diagnosticsPanel`, { treeDataProvider: diagnostics });
+  const pipelinesView = vscode.window.createTreeView(`${SECTION}.pipelinesView`, { treeDataProvider: pipelines, showCollapseAll: true });
   const repoView = vscode.window.createTreeView(`${SECTION}.repositoriesView`, { treeDataProvider: repositories });
   const statsView = vscode.window.createTreeView(`${SECTION}.statsView`, { treeDataProvider: stats, showCollapseAll: true });
   diagnostics.onCounts = (errors, warnings) => {
@@ -148,9 +151,17 @@ async function activate(context) {
       ? { value: errors + warnings, tooltip: `${errors} error(s), ${warnings} warning(s)` }
       : undefined;
   };
+  // "2 of 7 will fail" next to the view title; the badge counts failing pipelines.
+  pipelines.onSummary = reports => {
+    const failing = (reports || []).filter(r => r.verdict === 'fail').length;
+    const warned = (reports || []).filter(r => r.verdict === 'warn').length;
+    pipelinesView.description = !reports ? '' : failing ? `${failing} of ${reports.length} will fail`
+      : warned ? `${warned} of ${reports.length} may fail` : reports.length ? `all ${reports.length} OK` : '';
+    pipelinesView.badge = failing ? { value: failing, tooltip: `${failing} pipeline(s) will fail when queued` } : undefined;
+  };
   tree.onTitle = title => { treeView.description = title; };
   context.subscriptions.push(vscode.window.registerTreeDataProvider(`${SECTION}.feedbackView`, new FeedbackTreeProvider()));
-  context.subscriptions.push(treeView, diagView, repoView, statsView,
+  context.subscriptions.push(treeView, diagView, pipelinesView, repoView, statsView,
     vscode.window.registerWebviewViewProvider(`${SECTION}.graphView`, graph, { webviewOptions: { retainContextWhenHidden: true } }));
 
   const onEditor = editor => {
@@ -353,7 +364,7 @@ async function activate(context) {
   onEditor(vscode.window.activeTextEditor);
   refreshViews();
   // For the E2E test.
-  return { request, graph, stats };
+  return { request, graph, stats, pipelines };
 }
 
 async function deactivate() {

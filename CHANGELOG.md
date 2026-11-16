@@ -9,7 +9,9 @@ For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vsco
 
 - **"Will this pipeline run?" before you run it.** Every pipeline gets a verdict above its first line, for example `✗ Will fail when queued: 2 errors` or `✓ No problems found before running`.
   - It covers the pipeline and every template it uses, including templates in other repositories.
-  - Click it (or run **Check Pipeline Before Running** from the command palette or the editor menu) to list the problems and jump to one.
+  - Click it (or run **Check Pipeline Before Running** from the editor's right-click menu, or the command palette in VS Code) to list the problems and jump to one.
+  - **Pipelines view** (VS Code: Azure Templates sidebar; IntelliJ: a Pipelines tab): every pipeline in the workspace with its verdict, failing first, and "2 of 7 will fail" at the top, so you don't have to open each one. Expand a pipeline for its problems and click one to jump to it. In VS Code, the view's badge counts the failing pipelines.
+  - `atn/pipelineCheck` reports now carry `verdict` (`fail`, `warn` or `ok`) and `filePath`; each problem carries `filePath` too.
   - `atn check` prints the same verdicts for every pipeline. `atn check path/to/pipeline.yml` checks that pipeline together with all of its templates.
 - **New checks for what Azure rejects when a run is queued** (errors):
   - `repository-not-declared`: a template, at any depth, uses `x.yml@alias` or `checkout: alias`, and the pipeline doesn't declare `alias` in `resources.repositories`. Azure looks aliases up in the pipeline's resources, not the template's. Quick fix: copy the declaration from another pipeline in the workspace.

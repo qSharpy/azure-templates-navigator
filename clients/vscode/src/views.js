@@ -1,7 +1,7 @@
 'use strict';
 
 // Tree views. They render view models produced by the language server
-// (atn/dependencyTree, atn/workspaceDiagnostics, atn/repositories, atn/stats), so labels,
+// (atn/dependencyTree, atn/workspaceDiagnostics, atn/pipelineCheck, atn/repositories, atn/stats), so labels,
 // descriptions and tooltips are identical to the IntelliJ plugin.
 
 const vscode = require('vscode');
@@ -163,6 +163,64 @@ class RepositoriesTreeProvider extends Base {
   }
 }
 
+// ── Pipelines ─────────────────────────────────────────────────────────────
+// Every root pipeline with its verdict (atn/pipelineCheck without a uri),
+// failing first; expand one for its problems, in it and in its templates.
+const VERDICT_ICON = {
+  fail: ['error', 'list.errorForeground'],
+  warn: ['warning', 'list.warningForeground'],
+  ok: ['pass', 'testing.iconPassed'],
+};
+
+class PipelinesTreeProvider extends Base {
+  constructor(request) {
+    super(request);
+    this.onSummary = () => {};
+  }
+
+  async getChildren(element) {
+    if (element) return element.children || [];
+    const reports = await this.request('atn/pipelineCheck', {});
+    if (!reports) {
+      this.onSummary(null);
+      return [{ message: 'Diagnostics are turned off', tooltip: 'Turn on azure-templates-navigator.diagnostics.enabled to check pipelines' }];
+    }
+    this.onSummary(reports);
+    return reports.map(r => ({ report: r, children: r.problems.map(p => ({ problem: p })) }));
+  }
+
+  getTreeItem(el) {
+    if (el.message) {
+      const item = new vscode.TreeItem(el.message, vscode.TreeItemCollapsibleState.None);
+      item.iconPath = new vscode.ThemeIcon('info');
+      item.tooltip = el.tooltip;
+      return item;
+    }
+    if (el.problem) {
+      const p = el.problem;
+      const item = new vscode.TreeItem(p.message, vscode.TreeItemCollapsibleState.None);
+      item.description = `${p.relativePath}:${p.range.start.line + 1}`;
+      item.tooltip = `${p.message}\n${p.relativePath}:${p.range.start.line + 1} [${p.code}]`;
+      item.iconPath = new vscode.ThemeIcon(p.severity === 1 ? 'error' : 'warning',
+        new vscode.ThemeColor(p.severity === 1 ? 'list.errorForeground' : 'list.warningForeground'));
+      item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Go to problem', arguments: [{ filePath: p.filePath, line: p.range.start.line }] };
+      return item;
+    }
+    const r = el.report;
+    const item = new vscode.TreeItem(r.relativePath, r.problems.length
+      ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
+    item.id = `pipeline:${r.filePath}`;
+    item.description = r.title.replace(/^\S+ /, '');
+    item.tooltip = `${r.relativePath}\n${r.title}\n${r.templates} template(s) checked`;
+    const [id, color] = VERDICT_ICON[r.verdict] || VERDICT_ICON.ok;
+    item.iconPath = new vscode.ThemeIcon(id, new vscode.ThemeColor(color));
+    item.resourceUri = vscode.Uri.file(r.filePath);
+    item.contextValue = 'pipeline';
+    item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: r.filePath }] };
+    return item;
+  }
+}
+
 // ── Stats ─────────────────────────────────────────────────────────────────
 const STAT_ICON = {
   pipeline: 'rocket', template: 'file-code', external: 'repo', missing: 'error',
@@ -229,4 +287,4 @@ class FeedbackTreeProvider {
   }
 }
 
-module.exports = { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider, StatsTreeProvider, FeedbackTreeProvider };
+module.exports = { DependencyTreeProvider, DiagnosticsTreeProvider, PipelinesTreeProvider, RepositoriesTreeProvider, StatsTreeProvider, FeedbackTreeProvider };

@@ -169,6 +169,23 @@ async function run() {
   assert.ok(verdict[0].command.title.startsWith('✗ Will fail when queued'), 'verdict lens');
   assert.strictEqual(verdict[0].command.command, 'azure-templates-navigator.showPipelineProblems');
 
+  // 10. Pipelines view: every root pipeline with its verdict, failing first, problems underneath
+  const plRows = await waitFor(async () => {
+    const r = await api.pipelines.getChildren();
+    return r && r.length && r[0].report ? r : null;
+  });
+  console.log('pipelines:', plRows.map(r => `${r.report.relativePath}=${r.report.verdict}`).join(', '));
+  const rank = { fail: 0, warn: 1, ok: 2 };
+  for (let i = 1; i < plRows.length; i++) {
+    assert.ok(rank[plRows[i - 1].report.verdict] <= rank[plRows[i].report.verdict], 'failing pipelines first');
+  }
+  const mainPipe = plRows.find(r => r.report.relativePath === 'azure-pipelines.yml');
+  assert.strictEqual(mainPipe.report.verdict, 'fail');
+  assert.ok(api.pipelines.getTreeItem(mainPipe).description.startsWith('Will fail when queued'), 'verdict as description');
+  const problemItem = api.pipelines.getTreeItem((await api.pipelines.getChildren(mainPipe))[0]);
+  assert.strictEqual(problemItem.command.command, 'azure-templates-navigator.openTemplate');
+  assert.ok(problemItem.command.arguments[0].filePath, 'problem opens its file');
+
   await vscode.commands.executeCommand('workbench.view.extension.azure-templates-navigator');
   await sleep(1500);
   console.log('E2E OK');

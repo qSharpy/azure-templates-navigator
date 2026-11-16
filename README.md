@@ -56,6 +56,11 @@ trigger:
   - Runtime parameters without a default in a pipeline that a trigger or a schedule starts.
   - `${{ parameters.x }}` that evaluates to an empty string.
 
+You don't have to open each pipeline. The **Pipelines** view (VS Code: in the Azure Templates sidebar;
+IntelliJ: a tab of the Azure Templates tool window) lists every pipeline in the workspace with its verdict,
+failing pipelines first, and "2 of 7 will fail" at the top. Expand a pipeline for its problems, in it and
+in its templates, and click one to jump to it.
+
 The same verdict is available in a terminal or a PR check: `atn check path/to/pipeline.yml`.
 These checks read the YAML only. They can't know about things that live in Azure DevOps: service
 connections, variable groups, environments, agent pools, permissions, or what your scripts do.
@@ -122,7 +127,7 @@ Each feature is computed once by `atn` and shown through the IDE's own UI.
 | Stages / jobs / steps / template calls | Structure view (Cmd/Ctrl+F12) | Outline view, breadcrumbs |
 | Jump to the referenced template | Ctrl/Cmd+click, or the gutter icon on `template:` | Ctrl/Cmd+click |
 | Problems and fixes | Inspections + Alt+Enter; Diagnostics tab | Problems view + quick fixes |
-| Will this pipeline run? | Verdict Code Vision above a pipeline; *Check Pipeline Before Running* (editor menu) | Verdict code lens above a pipeline; *Check Pipeline Before Running* (palette) |
+| Will this pipeline run? | Pipelines tab (every pipeline's verdict, failing first); verdict Code Vision above a pipeline; *Check Pipeline Before Running* (editor right-click menu) | Pipelines view (every pipeline's verdict, failing first); verdict code lens above a pipeline; *Check Pipeline Before Running* (editor right-click menu, palette) |
 | Template graph | Graph tab (IntelliJ toolbar and menus) | Graph panel |
 | Graph filters: problems, kinds, repositories, callers/callees | *Only Problems*, *Filter* popup and direction combo in the Graph tab toolbar | Filter bar under the graph toolbar; direction next to *Depth* |
 | Problems by type, most used / mis-called / unused templates, per-repository counts | Stats tab | Stats view |

@@ -322,15 +322,19 @@ func TestPipelineVerdictLensAndRequest(t *testing.T) {
 
 	var rep struct {
 		Title    string
+		Verdict  string
+		FilePath string
 		Errors   int
 		Problems []struct {
-			URI   string
-			Range lspRange
-			Code  string
+			URI      string
+			FilePath string
+			Range    lspRange
+			Code     string
 		}
 	}
 	cl.call("atn/pipelineCheck", map[string]string{"uri": uri}, &rep)
-	if rep.Errors != 1 || len(rep.Problems) != 1 || rep.Problems[0].Code != "missing-required-param" || rep.Problems[0].URI != uri ||
+	if rep.Errors != 1 || rep.Verdict != "fail" || rep.FilePath != pipePath || len(rep.Problems) != 1 ||
+		rep.Problems[0].Code != "missing-required-param" || rep.Problems[0].URI != uri || rep.Problems[0].FilePath != pipePath ||
 		rep.Problems[0].Range.Start.Line != 2 {
 		t.Fatalf("report %+v", rep)
 	}

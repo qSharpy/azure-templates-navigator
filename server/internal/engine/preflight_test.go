@@ -419,6 +419,38 @@ steps:
 	}
 }
 
+// The Pipelines view lists failing pipelines first, then those with
+// warnings, then clean ones, by path within each group; nothing when
+// diagnostics are off.
+func TestPipelineOverviewOrder(t *testing.T) {
+	files := map[string]string{
+		"t/a.yml":    "parameters:\n  - name: env\n    type: string\nsteps:\n  - script: echo ${{ parameters.env }}\n",
+		"a-ok.yml":   "trigger: none\nsteps:\n  - template: t/a.yml\n    parameters:\n      env: dev\n",
+		"b-fail.yml": "trigger: none\nsteps:\n  - template: t/a.yml\n",
+		"c-warn.yml": "trigger: none\nsteps:\n  - script: echo $(dependencies.nope.outputs['x.y'])\n",
+		"d-fail.yml": "trigger: none\nsteps:\n  - template: t/missing.yml\n",
+	}
+	_, e := preflightWorkspace(t, files)
+	reports, ok := e.PipelineOverview()
+	if !ok {
+		t.Fatal("overview off")
+	}
+	var got []string
+	for _, r := range reports {
+		got = append(got, r.RelativePath+":"+r.Verdict())
+	}
+	want := []string{"b-fail.yml:fail", "d-fail.yml:fail", "c-warn.yml:warn", "a-ok.yml:ok"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("order %v, want %v", got, want)
+	}
+	s := e.Settings()
+	s.Diagnostics.Enabled = false
+	e.SetSettings(s)
+	if r, ok := e.PipelineOverview(); ok || r != nil {
+		t.Errorf("diagnostics off: %v %v", r, ok)
+	}
+}
+
 // Editing a template two levels down must update the root pipeline's
 // diagnostics, exactly as a full rebuild would.
 func TestDeepTemplateEditUpdatesRootPipeline(t *testing.T) {

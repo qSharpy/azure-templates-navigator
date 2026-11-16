@@ -10,6 +10,7 @@ import com.bogdanbujor.azuretemplates.int
 import com.bogdanbujor.azuretemplates.list
 import com.bogdanbujor.azuretemplates.obj
 import com.bogdanbujor.azuretemplates.str
+import com.bogdanbujor.azuretemplates.settings.AtnSettings
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.intellij.icons.AllIcons
@@ -86,6 +87,7 @@ class AtnToolWindowFactory : ToolWindowFactory {
             tabs.addTab(title, panel)
         }
         add("Dependencies") { DependenciesPanel(project) }
+        add("Pipelines") { PipelinesPanel(project) }
         add("Graph") { GraphPanel(project) }
         add("Diagnostics") { DiagnosticsPanel(project) }
         add("Repositories") { RepositoriesPanel(project) }
@@ -234,6 +236,9 @@ abstract class ServerTreePanel(protected val project: Project) : SimpleToolWindo
     protected val service = AtnService.getInstance(project)
     protected val tree = Tree(DefaultTreeModel(DefaultMutableTreeNode()))
 
+    /** Expand every top-level node on reload (otherwise only those the user had open). */
+    protected open val expandTopLevel = true
+
     init {
         tree.isRootVisible = false
         tree.showsRootHandles = true
@@ -288,7 +293,7 @@ abstract class ServerTreePanel(protected val project: Project) : SimpleToolWindo
                 TreeUtil.treeNodeTraverser(root).forEach { n ->
                     val node = n as DefaultMutableTreeNode
                     val item = node.userObject as? Item
-                    if (node.level == 1 || (item != null && item.label in expanded)) {
+                    if ((expandTopLevel && node.level == 1) || (item != null && item.label in expanded)) {
                         tree.expandPath(TreeUtil.getPathFromRoot(node))
                     }
                 }
@@ -413,6 +418,73 @@ class DiagnosticsPanel(project: Project) : ServerTreePanel(project) {
                     open = { service.openFile(path, d.int("line")) })))
             }
             root.add(fileNode)
+        }
+    }
+}
+
+// ── Pipelines ─────────────────────────────────────────────────────────────
+/**
+ * Every root pipeline with its verdict ("Will fail when queued: 2 errors"),
+ * failing first, from atn/pipelineCheck without a uri. Expand a pipeline for
+ * its problems, in it and in the templates it uses; double-click to open.
+ */
+class PipelinesPanel(project: Project) : ServerTreePanel(project) {
+    override val expandTopLevel = false
+
+    init {
+        toolbar(
+            action("Refresh", AllIcons.Actions.Refresh) { service.execute("atn.refresh"); reload() },
+            action("Expand All", AllIcons.Actions.Expandall) { TreeUtil.expandAll(tree) },
+            action("Collapse All", AllIcons.Actions.Collapseall) { TreeUtil.collapseAll(tree, 1) },
+        )
+        contextMenu(action("Open", AllIcons.Actions.EditSource) { selectedItem()?.open?.invoke() })
+        reload()
+    }
+
+    override fun load() = service.pipelineChecks()
+
+    private fun verdictIcon(verdict: String): Icon = when (verdict) {
+        "fail" -> AllIcons.General.Error
+        "warn" -> AllIcons.General.Warning
+        else -> AllIcons.General.InspectionsOK
+    }
+
+    override fun build(root: DefaultMutableTreeNode, json: JsonElement?) {
+        if (json == null || json.isJsonNull) {
+            // null: diagnostics are off (no verdicts), or the server isn't up yet
+            val off = !AtnSettings.getInstance().state.diagnosticsEnabled
+            root.add(DefaultMutableTreeNode(
+                if (off) Item("Diagnostics are turned off", "Settings → Tools → Azure Templates Navigator", AllIcons.General.Information)
+                else Item("Checking pipelines…", "waiting for the language server", AllIcons.Process.Step_1)))
+            return
+        }
+        val reports = json.arr().mapNotNull { it.obj() }
+        if (reports.isEmpty()) {
+            root.add(DefaultMutableTreeNode(Item("No pipelines found in this project", icon = AllIcons.General.Information,
+                tooltip = "A pipeline has pipeline-level keys (trigger, pr, schedules, resources, extends, pool) and no other file uses it as a template")))
+            return
+        }
+        val failing = reports.count { it.str("verdict") == "fail" }
+        val warned = reports.count { it.str("verdict") == "warn" }
+        val summary = when {
+            failing > 0 -> "$failing of ${reports.size} pipelines will fail when queued"
+            warned > 0 -> "$warned of ${reports.size} pipelines may fail while running"
+            else -> "All ${reports.size} pipelines: no problems found"
+        }
+        root.add(DefaultMutableTreeNode(Item(summary, icon = verdictIcon(if (failing > 0) "fail" else if (warned > 0) "warn" else "ok"))))
+        for (r in reports) {
+            val path = r.str("filePath")
+            val node = DefaultMutableTreeNode(Item(r.str("relativePath"), r.str("title").substringAfter(' '), verdictIcon(r.str("verdict")),
+                "<html>${StringUtil.escapeXmlEntities(r.str("title"))}<br>${r.int("templates")} template(s) checked</html>",
+                data = r, open = { service.openFile(path) }))
+            for (p in r.list("problems")) {
+                val line = p.get("range").obj()?.get("start").obj()?.int("line") ?: 0
+                val where = "${p.str("relativePath")}:${line + 1}"
+                node.add(DefaultMutableTreeNode(Item(p.str("message"), where,
+                    if (p.int("severity") == 1) AllIcons.General.Error else AllIcons.General.Warning,
+                    "$where [${p.str("code")}]", data = p, open = { service.openFile(p.str("filePath"), line) })))
+            }
+            root.add(node)
         }
     }
 }

@@ -153,11 +153,13 @@ func (s *Server) codeLens(raw json.RawMessage) interface{} {
 }
 
 // pipelineCheck answers atn/pipelineCheck: the verdict of one root pipeline
-// (path set), or of every root pipeline in the workspace. Problem positions
-// are LSP positions (UTF-16), with the file's URI.
+// (path set), or of every root pipeline in the workspace, failing first (the
+// Pipelines view; null when diagnostics are off). Problem positions are LSP
+// positions (UTF-16), with the file's URI and path.
 func (s *Server) pipelineCheck(path string) interface{} {
 	type problem struct {
 		URI          string   `json:"uri"`
+		FilePath     string   `json:"filePath"`
 		RelativePath string   `json:"relativePath"`
 		Range        lspRange `json:"range"`
 		Severity     int      `json:"severity"`
@@ -166,8 +168,10 @@ func (s *Server) pipelineCheck(path string) interface{} {
 	}
 	type report struct {
 		URI          string    `json:"uri"`
+		FilePath     string    `json:"filePath"`
 		RelativePath string    `json:"relativePath"`
 		Title        string    `json:"title"`
+		Verdict      string    `json:"verdict"` // fail | warn | ok
 		Errors       int       `json:"errors"`
 		Warnings     int       `json:"warnings"`
 		Templates    int       `json:"templates"`
@@ -175,10 +179,10 @@ func (s *Server) pipelineCheck(path string) interface{} {
 		Problems     []problem `json:"problems"`
 	}
 	conv := func(r engine.PipelineReport) report {
-		out := report{URI: pathToURI(r.Path), RelativePath: r.RelativePath, Title: r.Title(), Errors: r.Errors, Warnings: r.Warnings,
+		out := report{URI: pathToURI(r.Path), FilePath: r.Path, RelativePath: r.RelativePath, Title: r.Title(), Verdict: r.Verdict(), Errors: r.Errors, Warnings: r.Warnings,
 			Templates: r.Templates, Dynamic: r.Dynamic, Problems: []problem{}}
 		for _, p := range r.Problems {
-			out.Problems = append(out.Problems, problem{URI: pathToURI(p.Path), RelativePath: p.RelativePath,
+			out.Problems = append(out.Problems, problem{URI: pathToURI(p.Path), FilePath: p.Path, RelativePath: p.RelativePath,
 				Range: s.rangeOf(p.Path, p.Line, p.StartCol, p.EndLine, p.EndCol), Severity: p.Severity, Code: p.Code, Message: p.Message})
 		}
 		return out
@@ -190,8 +194,12 @@ func (s *Server) pipelineCheck(path string) interface{} {
 		}
 		return conv(r)
 	}
+	reports, ok := s.eng.PipelineOverview()
+	if !ok {
+		return nil // diagnostics are off: no verdicts
+	}
 	all := []report{}
-	for _, r := range s.eng.PipelineChecks() {
+	for _, r := range reports {
 		all = append(all, conv(r))
 	}
 	return all

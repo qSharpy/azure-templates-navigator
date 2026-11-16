@@ -103,6 +103,9 @@ class AtnService(private val project: Project) : Disposable {
     /** Verdict of a root pipeline (null for a template): everything that would make it fail. */
     fun pipelineCheck(path: String) = call { it.pipelineCheck(JsonObject().apply { addProperty("uri", fileUri(path)) }) }
 
+    /** Verdicts of every root pipeline, failing first (null when diagnostics are off). */
+    fun pipelineChecks() = call { it.pipelineCheck(JsonObject()) }
+
     fun execute(command: String, vararg args: Any): CompletableFuture<Any?> =
         server().thenCompose { s ->
             s?.workspaceService?.executeCommand(ExecuteCommandParams(command, args.toList()))

@@ -267,6 +267,11 @@
           "icon": "$(type-hierarchy-sub)"
         },
         {
+          "id": "azure-templates-navigator.pipelinesView",
+          "name": "Pipelines",
+          "icon": "$(pass)"
+        },
+        {
           "id": "azure-templates-navigator.graphView",
           "name": "Template Graph",
           "type": "webview",
@@ -298,6 +303,10 @@
       {
         "view": "azure-templates-navigator.repositoriesView",
         "contents": "No `resources.repositories` found in this workspace.\nTemplates referenced as `path.yml@alias` are downloaded here automatically."
+      },
+      {
+        "view": "azure-templates-navigator.pipelinesView",
+        "contents": "No pipelines found in this workspace.\nA pipeline is a YAML file with pipeline-level keys such as `trigger`, `pr`, `schedules`, `resources`, `extends` or `pool` that no other file uses as a template."
       }
     ],
     "menus": {
@@ -346,6 +355,11 @@
           "command": "azure-templates-navigator.reportIssue",
           "when": "view =~ /^azure-templates-navigator\\.(templateTree|diagnosticsPanel)$/",
           "group": "navigation@8"
+        },
+        {
+          "command": "azure-templates-navigator.refresh",
+          "when": "view == azure-templates-navigator.pipelinesView",
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [
@@ -443,6 +457,13 @@
         {
           "command": "azure-templates-navigator.showInGraph",
           "when": "false"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "azure-templates-navigator.showPipelineProblems",
+          "when": "resourceExtname =~ /^\\.ya?ml$/",
+          "group": "navigation@90"
         }
       ]
     }

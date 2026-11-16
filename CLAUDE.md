@@ -24,7 +24,7 @@ If you find yourself writing YAML parsing or template logic in JS or Kotlin, sto
   - Name-based checks (`dependsOn`, outputs) only run when the expansion is complete (no dynamic or unresolved template references). They collect names across every `${{ if }}` branch, and `${{ }}` parts of names match anything, so they only report names that can't exist.
 - **`server/internal/lsp`**: JSON-RPC framing and the LSP methods. It converts between UTF-16 positions and byte columns.
   - Standard methods beyond hover/definition/completion/codeAction: `documentSymbol` (outline: `pipeline/outline.go`), `references`, `codeLens` ("N usages" above a template), `prepareCallHierarchy` + `callHierarchy/incomingCalls|outgoingCalls`. Logic is in `engine/navigation.go`; `lsp/navigation.go` only converts.
-  - Custom requests: `atn/dependencyTree`, `atn/graph`, `atn/workspaceDiagnostics`, `atn/templates`, `atn/parameters`, `atn/repositories`, `atn/references` (usages with labels, for client-drawn popups), `atn/stats` (Stats view sections), `atn/pipelineCheck` (a pipeline's verdict and problems, or every pipeline's without a uri), `atn/info`.
+  - Custom requests: `atn/dependencyTree`, `atn/graph`, `atn/workspaceDiagnostics`, `atn/templates`, `atn/parameters`, `atn/repositories`, `atn/references` (usages with labels, for client-drawn popups), `atn/stats` (Stats view sections), `atn/pipelineCheck` (a pipeline's verdict and problems; without a uri, every pipeline's, failing first, for the Pipelines view, or null when diagnostics are off), `atn/info`.
   - `atn/graph` takes `uri`/`depth`/`direction` (file scope) and the filters `problemsOnly`, `kinds`, `repos` (empty = all). It returns nodes with workspace-wide `callers`/`usages`/`pipelines`/`callees`/`weight` (node size) and a `tooltip`, plus `totalNodes`, `totalEdges` and `facets`. Filtering and counting live in `engine/insights.go`, not in the webview.
   - Code lenses have a kind. `usages` (above a template) runs `<commandPrefix>showUsages`. `pipeline` (the verdict above a root pipeline) runs `<commandPrefix>showPipelineProblems` with `{uri}`. The server sends `workspace/codeLens/refresh` when diagnostics change, because a verdict depends on other files.
   - Notification: `atn/didChange`.
@@ -37,12 +37,12 @@ If you find yourself writing YAML parsing or template logic in JS or Kotlin, sto
   - The host owns the filter state and echoes it in `graphData` with the totals and facets. The page's filter bar only sends `setFilter`.
   - `window.atnHost.nativeChrome = true` (IntelliJ) hides the page's own search bar, toolbar and filter bar, and sends `contextMenu` instead of drawing a menu. The host provides those natively. The counts overlay and legend stay in the page.
 - **`clients/vscode`**: plain JS with `vscode-languageclient`.
-  - `extension.js`: client and commands. `src/views.js`: tree providers (including Stats). `src/graphView.js`: the webview.
-  - `activate()` returns `{ request, graph, stats }` for the E2E test.
+  - `extension.js`: client and commands. `src/views.js`: tree providers (including Pipelines and Stats). `src/graphView.js`: the webview.
+  - `activate()` returns `{ request, graph, stats, pipelines }` for the E2E test.
   - `src/issue.js`: the pre-filled GitHub issue URL behind `reportIssue`. The *Help and Feedback* view (`FeedbackTreeProvider`) and a bug button on the view titles run it; `giveFeedback` opens the Marketplace reviews.
   - `scripts/copy-assets.js` copies `shared/webview` → `media/` and `dist/bin` → `bin/`. Both are generated, so don't edit them.
 - **`clients/intellij`**: Kotlin with LSP4IJ.
-  - `lsp/AtnLsp.kt`: factory, connection, client and binary lookup. `AtnService.kt`: requests and the change topic. `settings/`, `ui/` (tool window tabs incl. Stats, JCEF graph with native filter actions, actions).
+  - `lsp/AtnLsp.kt`: factory, connection, client and binary lookup. `AtnService.kt`: requests and the change topic. `settings/`, `ui/` (tool window tabs incl. Pipelines and Stats, JCEF graph with native filter actions, actions).
   - The tabs are our own strip (`AtnTabs`: tab labels in a `WrapLayout` over a `CardLayout`) inside one content. Header tabs that don't fit get hidden behind a dropdown, and a wrapping `JTabbedPane` moves the selected row next to the content, so the rows swap on every click. Find a tab with `AtnTabs.select<T>()`. Each tab is created in its own try, so one failure doesn't drop the rest.
   - JCEF is the bundled plugin `com.intellij.modules.jcef` since 2026.3. `plugin.xml` depends on it optionally (`atn-jcef.xml`). Without that, the Graph classes fail to load there. The Gradle sandbox runs 2024.2, where JCEF is in core, so test JCEF changes on 2026.3+ too.
   - `ui/Navigation.kt`: the native pieces (usages popup, `ShowUsagesAction`, gutter icons on `template:`, Structure view routing).

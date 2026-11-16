@@ -374,6 +374,18 @@ func (r PipelineReport) Title() string {
 	return "✓ No problems found before running"
 }
 
+// Verdict is the outcome in one word: "fail" (errors: Azure rejects the run
+// when it is queued), "warn" (warnings: the run may go wrong) or "ok".
+func (r PipelineReport) Verdict() string {
+	switch {
+	case r.Errors > 0:
+		return "fail"
+	case r.Warnings > 0:
+		return "warn"
+	}
+	return "ok"
+}
+
 // notAboutTheRun are codes that say nothing about whether a run succeeds.
 var notAboutTheRun = map[string]bool{CodeUnusedParam: true}
 
@@ -402,6 +414,26 @@ func (e *Engine) PipelineChecks() []PipelineReport {
 		}
 	}
 	return out
+}
+
+// PipelineOverview returns every root pipeline's verdict for the Pipelines
+// view: failing pipelines first, then those with warnings, then the rest,
+// by path within each group. ok is false when diagnostics are turned off,
+// because there are no verdicts then.
+func (e *Engine) PipelineOverview() (reports []PipelineReport, ok bool) {
+	if !e.Settings().Diagnostics.Enabled {
+		return nil, false
+	}
+	reports = e.PipelineChecks()
+	rank := map[string]int{"fail": 0, "warn": 1, "ok": 2}
+	sort.SliceStable(reports, func(i, j int) bool {
+		a, b := rank[reports[i].Verdict()], rank[reports[j].Verdict()]
+		if a != b {
+			return a < b
+		}
+		return reports[i].RelativePath < reports[j].RelativePath
+	})
+	return reports, true
 }
 
 func (e *Engine) pipelineReport(path string) PipelineReport {
