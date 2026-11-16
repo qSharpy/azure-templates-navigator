@@ -106,6 +106,20 @@ func (e *Engine) degrees() *degreeIndex {
 			}
 		}
 	}
+	for id, n := range e.pipelineReach(d, files) {
+		d.get(id).pipelines = n
+	}
+	return d
+}
+
+// pipelineReach counts, for every node, the pipelines that reach it. It walks
+// every pipeline's whole call tree, so the result is cached until the call
+// graph changes (e.version).
+func (e *Engine) pipelineReach(d *degreeIndex, files []string) map[string]int {
+	if e.reach != nil && e.reachVersion == e.version {
+		return e.reach
+	}
+	out := map[string]int{}
 	for _, p := range files {
 		f := e.file(p)
 		if f == nil || !f.isPipeline {
@@ -122,14 +136,15 @@ func (e *Engine) degrees() *degreeIndex {
 					continue
 				}
 				seen[id] = true
-				d.get(id).pipelines++
+				out[id]++
 				if ed.target != "" {
 					stack = append(stack, ed.target)
 				}
 			}
 		}
 	}
-	return d
+	e.reach, e.reachVersion = out, e.version
+	return out
 }
 
 type problemCount struct{ errors, warnings int }
@@ -487,7 +502,7 @@ func (e *Engine) Stats() []StatSection {
 		r.Value = dg.usages
 		r.Description = count(dg.usages, "usage") + " · " + count(len(dg.callers), "file")
 		if dg.pipelines > 0 {
-			r.Description += " · " + count(dg.pipelines, "pipeline")
+			r.Description += " · reached from " + count(dg.pipelines, "pipeline")
 		}
 		r.Tooltip += fmt.Sprintf("\nUsed by %s (%s), reached from %s", count(len(dg.callers), "file"), count(dg.usages, "usage"), count(dg.pipelines, "pipeline"))
 		mostUsed.Rows = append(mostUsed.Rows, r)

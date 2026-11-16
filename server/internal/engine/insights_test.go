@@ -155,7 +155,7 @@ func TestStats(t *testing.T) {
 
 	mu := section(t, ss, "mostUsed")
 	if len(mu.Rows) == 0 || mu.Rows[0].Label != "build.yml" || mu.Rows[0].Value != 4 || mu.Rows[0].Focus != "file" ||
-		mu.Rows[0].Description != "4 usages · 3 files · 2 pipelines" {
+		mu.Rows[0].Description != "4 usages · 3 files · reached from 2 pipelines" {
 		t.Errorf("most used: %+v", mu.Rows)
 	}
 	for _, r := range mu.Rows {

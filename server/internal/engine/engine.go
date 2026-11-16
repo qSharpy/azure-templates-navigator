@@ -106,6 +106,11 @@ type Engine struct {
 	// change, so clients know when to reload their views.
 	version int
 
+	// reach caches how many pipelines reach each graph node (insights.go).
+	// It only depends on edges, so it is valid while version is unchanged.
+	reach        map[string]int
+	reachVersion int
+
 	rootCache   map[string]string
 	originCache map[string]string
 	diagCache   map[string][]Diagnostic

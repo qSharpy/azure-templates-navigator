@@ -682,6 +682,7 @@ function edgeColor(e) {
  * @param {import('../graphWebViewProvider').GraphEdge[]} edges
  */
 function renderGraph(nodes, edges, scopedFile) {
+  hideNodeTip();
   if (!nodes || nodes.length === 0) {
     allNodes = [];
     allEdges = [];
@@ -814,9 +815,6 @@ function renderGraph(nodes, edges, scopedFile) {
   // Context nodes (callers kept only to show who uses a filtered node) are faded.
   nodeGroup.style('opacity', d => d.context ? 0.45 : 1);
 
-  // Hover tooltip, written by the server
-  nodeGroup.append('title').text(d => d.tooltip || d.relativePath || d.label);
-
   // Circle
   nodeGroup.append('circle')
     .attr('r', d => radius(d))
@@ -876,9 +874,12 @@ function renderGraph(nodes, edges, scopedFile) {
     })
     .on('mouseover', (event, d) => {
       highlightNeighbours(d, edgeSel, nodeGroup);
+      showNodeTip(event, d);
     })
+    .on('mousemove', (event) => moveNodeTip(event))
     .on('mouseout', () => {
       resetHighlight(edgeSel, nodeGroup);
+      hideNodeTip();
     });
 
   // Click on background → dismiss context menu
@@ -918,6 +919,38 @@ function renderGraph(nodes, edges, scopedFile) {
   // Fit early (nodes are roughly in place after ~800 ms) and again when fully settled
   setTimeout(() => fitView(), 800);
   simulation.on('end', () => fitView());
+}
+
+// ---------------------------------------------------------------------------
+// Node hover card (text written by the server)
+// ---------------------------------------------------------------------------
+const nodeTip = document.getElementById('node-tip');
+
+function showNodeTip(event, d) {
+  const lines = (d.tooltip || d.relativePath || d.label || '').split('\n');
+  nodeTip.textContent = '';
+  const title = document.createElement('div');
+  title.className = 'tip-title';
+  title.textContent = lines[0];
+  nodeTip.appendChild(title);
+  if (lines.length > 1) nodeTip.appendChild(document.createTextNode(lines.slice(1).join('\n')));
+  nodeTip.style.display = 'block';
+  moveNodeTip(event);
+}
+
+function moveNodeTip(event) {
+  if (nodeTip.style.display !== 'block') return;
+  const rect = document.getElementById('graph-container').getBoundingClientRect();
+  let x = event.clientX - rect.left + 14;
+  let y = event.clientY - rect.top + 14;
+  if (x + nodeTip.offsetWidth > rect.width - 4) x = Math.max(4, event.clientX - rect.left - nodeTip.offsetWidth - 10);
+  if (y + nodeTip.offsetHeight > rect.height - 4) y = Math.max(4, event.clientY - rect.top - nodeTip.offsetHeight - 10);
+  nodeTip.style.left = `${x}px`;
+  nodeTip.style.top = `${y}px`;
+}
+
+function hideNodeTip() {
+  nodeTip.style.display = 'none';
 }
 
 // ---------------------------------------------------------------------------
