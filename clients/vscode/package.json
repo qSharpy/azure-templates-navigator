@@ -2,7 +2,7 @@
   "name": "azure-templates-navigator",
   "displayName": "Azure Templates Navigator",
   "description": "Hover, validate, autocomplete and navigate Azure Pipelines YAML templates — including templates from other repositories, which are downloaded automatically.",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "publisher": "bogdanbujor",
   "license": "MIT",
   "icon": "logo.png",
@@ -57,6 +57,11 @@
           "type": "boolean",
           "default": true,
           "description": "Warn about parameters a template declares but never references."
+        },
+        "azure-templates-navigator.completion.requiredParameters": {
+          "type": "boolean",
+          "default": true,
+          "description": "When completing a template path, also insert a `parameters:` block with the template's required parameters (skipped when the call already has one)."
         },
         "azure-templates-navigator.graph.rootPath": {
           "type": "string",

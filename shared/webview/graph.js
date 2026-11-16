@@ -55,11 +55,13 @@ const KIND_COLOR = {
 };
 
 // Node size follows the server's `weight` (callers + callees, counted over
-// the whole workspace). sqrt keeps hubs from swamping the view.
-const MIN_RADIUS = 9;
-const MAX_RADIUS = 34;
+// the whole workspace), so a node keeps its size whatever the scope, depth or
+// filters. Area grows with weight (radius with its square root), steep enough
+// that hubs stand out: weight 1 → 13, 15 → 29, 40 → 43, 100 → 63, 140+ → 73.
+const MIN_RADIUS = 8;
+const MAX_RADIUS = 73;
 function radius(d) {
-  return Math.min(MAX_RADIUS, MIN_RADIUS + 4 * Math.sqrt(d.weight || 0));
+  return Math.min(MAX_RADIUS, MIN_RADIUS + 5.5 * Math.sqrt(d.weight || 0));
 }
 
 const KIND_STROKE = {
@@ -1016,14 +1018,18 @@ function fitView() {
   const w = svgEl.clientWidth  || 600;
   const h = svgEl.clientHeight || 500;
 
-  const xs = allNodes.map(n => n.x).filter(v => v != null && isFinite(v));
-  const ys = allNodes.map(n => n.y).filter(v => v != null && isFinite(v));
-  if (xs.length === 0) return;
-
-  const minX = Math.min(...xs) - padding;
-  const maxX = Math.max(...xs) + padding;
-  const minY = Math.min(...ys) - padding;
-  const maxY = Math.max(...ys) + padding;
+  // Bounds include each node's circle and the label below it.
+  const placed = allNodes.filter(n => n.x != null && isFinite(n.x) && n.y != null && isFinite(n.y));
+  if (placed.length === 0) return;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const n of placed) {
+    const r = radius(n);
+    minX = Math.min(minX, n.x - r);
+    maxX = Math.max(maxX, n.x + r);
+    minY = Math.min(minY, n.y - r);
+    maxY = Math.max(maxY, n.y + r + 16);
+  }
+  minX -= padding; maxX += padding; minY -= padding; maxY += padding;
 
   const scaleX = w / (maxX - minX);
   const scaleY = h / (maxY - minY);

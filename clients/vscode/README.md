@@ -38,7 +38,7 @@ Hover also works on a passed parameter (`  env: prod`), on `${{ parameters.x }}`
 
 - **Parameter names** under `parameters:`, with required ones first.
 - **Allowed values** and booleans.
-- **Template paths** after `template:`.
+- **Template paths** after `template:`. Picking one also adds a `parameters:` block with the template's required parameters (Tab moves between the values). Turn it off with `completion.requiredParameters`.
 
 ### Dependency tree, graph, stats and repositories
 
@@ -50,7 +50,7 @@ Hover also works on a passed parameter (`  env: prod`), on `${{ parameters.x }}`
   - Nodes are sized by how many files call a template plus how many it calls, across the whole workspace. Hover a node for its usages, the pipelines that reach it, and its problems.
   - The filter bar shows only problems, some kinds of nodes, or some repositories. Around the current file you can draw callers, callees or both.
   - The corner shows how many nodes and edges are drawn.
-- **Stats** is for teams that publish templates: most used, most mis-called, calls the most templates, not referenced in this workspace, and per-repository counts. *Show in Graph* centres or filters the graph on a row.
+- **Stats** is for teams that publish templates: problems by type, most used, most mis-called, calls the most templates, not referenced in this workspace, and per-repository counts. *Show in Graph* centres or filters the graph on a row.
 - **Diagnostics** lists the problems across the workspace.
 - **Repositories** lists every `resources.repositories` entry with its state, commit and age, plus fetch and open actions.
 
@@ -94,6 +94,7 @@ The cache is a shallow, read-only git fetch of the exact `ref`. It uses your exi
 | `azure-templates-navigator.repositories.githubEnterpriseHost` | | For `type: githubenterprise` |
 | `azure-templates-navigator.diagnostics.enabled` | `true` | |
 | `azure-templates-navigator.diagnostics.unusedParameters` | `true` | |
+| `azure-templates-navigator.completion.requiredParameters` | `true` | Add required parameters when completing a template path |
 | `azure-templates-navigator.requiredParameterColor` | `#c92d35` | Hover highlight |
 | `azure-templates-navigator.graph.rootPath` | | Sub-folder for the workspace graph |
 

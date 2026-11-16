@@ -30,6 +30,7 @@ class AtnSettings : PersistentStateComponent<AtnSettings.Data> {
         var diagnosticsEnabled: Boolean = true
         var unusedParameters: Boolean = true
         var graphRootPath: String = ""
+        var completionRequiredParameters: Boolean = true
         var autoFetch: Boolean = true
         var cacheDir: String = ""
         var refreshIntervalHours: Int = 12
@@ -60,6 +61,7 @@ class AtnSettings : PersistentStateComponent<AtnSettings.Data> {
             addProperty("unusedParameters", d.unusedParameters)
         })
         add("graph", JsonObject().apply { addProperty("rootPath", d.graphRootPath) })
+        add("completion", JsonObject().apply { addProperty("requiredParameters", d.completionRequiredParameters) })
         add("repositories", JsonObject().apply {
             addProperty("autoFetch", d.autoFetch)
             addProperty("cacheDir", d.cacheDir)
@@ -96,6 +98,12 @@ class AtnSettingsConfigurable : BoundConfigurable("Azure Templates Navigator") {
             group("Validation") {
                 row { checkBox("Validate template call sites").bindSelected(s::diagnosticsEnabled) }
                 row { checkBox("Warn about unused template parameters").bindSelected(s::unusedParameters) }
+            }
+            group("Completion") {
+                row {
+                    checkBox("Insert required parameters when completing a template path").bindSelected(s::completionRequiredParameters)
+                        .comment("Adds a parameters: block with the template's required parameters, unless the call already has one")
+                }
             }
             group("Template Graph") {
                 row("Workspace graph root:") { textField().bindText(s::graphRootPath).comment("Sub-folder shown in the workspace graph; empty = whole project") }

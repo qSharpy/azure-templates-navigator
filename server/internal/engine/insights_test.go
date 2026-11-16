@@ -186,4 +186,41 @@ func TestStats(t *testing.T) {
 		!strings.Contains(rp.Rows[0].Description, "1 broken reference") {
 		t.Errorf("repositories: %+v", rp.Rows)
 	}
+
+	// Problems by type: right after the overview, adds up to its errors + warnings,
+	// most frequent first, each type listing the files that have it.
+	if ss[1].ID != "problemsByType" {
+		t.Errorf("section order: %s second", ss[1].ID)
+	}
+	pt := section(t, ss, "problemsByType")
+	sum := 0
+	for i, r := range pt.Rows {
+		sum += r.Value
+		if i > 0 && r.Value > pt.Rows[i-1].Value {
+			t.Errorf("not sorted: %+v", pt.Rows)
+		}
+		files := 0
+		for _, c := range r.Children {
+			files += c.Value
+			if c.FilePath == "" {
+				t.Errorf("%s: child without file: %+v", r.Label, c)
+			}
+		}
+		if files != r.Value {
+			t.Errorf("%s: children add up to %d, want %d", r.Label, files, r.Value)
+		}
+	}
+	if sum != ov["Errors"]+ov["Warnings"] {
+		t.Errorf("problems by type add up to %d, overview says %d errors + %d warnings", sum, ov["Errors"], ov["Warnings"])
+	}
+	labels := map[string]StatRow{}
+	for _, r := range pt.Rows {
+		labels[r.Label] = r
+	}
+	if r := labels["Template not found"]; r.Kind != "error" || len(r.Children) == 0 {
+		t.Errorf("template not found: %+v", r)
+	}
+	if r := labels["Unknown parameter"]; r.Kind != "warning" || r.Children[0].Label != "azure-pipelines.yml" || r.Children[0].Line == 0 {
+		t.Errorf("unknown parameter: %+v", r)
+	}
 }

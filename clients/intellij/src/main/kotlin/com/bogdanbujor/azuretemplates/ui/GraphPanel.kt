@@ -22,6 +22,9 @@ import com.intellij.openapi.actionSystem.ex.ComboBoxAction
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.DumbAwareAction
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.diagnostic.ControlFlowException
+import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.FileEditorManager
 import com.intellij.openapi.fileEditor.FileEditorManagerEvent
@@ -44,6 +47,7 @@ import java.awt.MouseInfo
 import java.awt.Point
 import java.awt.datatransfer.StringSelection
 import javax.swing.JComponent
+import javax.swing.SwingConstants
 import javax.swing.SwingUtilities
 
 /**
@@ -74,7 +78,7 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
     init {
         if (!JBCefApp.isSupported()) {
             setContent(JBLabel("The template graph needs JCEF (embedded Chromium), which is not available in this IDE runtime.").apply { border = JBUI.Borders.empty(12) })
-        } else {
+        } else try {
             val b = JBCefBrowser()
             Disposer.register(this, b)
             val q = JBCefJSQuery.create(b as com.intellij.ui.jcef.JBCefBrowserBase)
@@ -92,6 +96,17 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
             })
             ApplicationManager.getApplication().messageBus.connect(this).subscribe(LafManagerListener.TOPIC, LafManagerListener { load() })
             setFile(FileEditorManager.getInstance(project).selectedFiles.firstOrNull()?.path)
+        } catch (e: Exception) {
+            // JCEF reports itself supported but fails to start (seen on managed
+            // machines): explain it here instead of failing the whole tool window.
+            if (e is ControlFlowException) throw e
+            logger<GraphPanel>().warn("[atn] the graph browser could not be started", e)
+            toolbar = null
+            setContent(JBLabel(
+                "<html>The template graph could not start the embedded browser (JCEF):<br><br>" +
+                    "<code>${StringUtil.escapeXmlEntities(e.toString())}</code><br><br>" +
+                    "The other tabs work without it. Please report this with the bug button above.</html>"
+            ).apply { border = JBUI.Borders.empty(12); verticalAlignment = SwingConstants.TOP })
         }
     }
 
@@ -417,9 +432,8 @@ class GraphPanel(private val project: Project) : SimpleToolWindowPanel(true, tru
         fun show(project: Project, then: (GraphPanel) -> Unit) {
             val tw = ToolWindowManager.getInstance(project).getToolWindow("Azure Templates") ?: return
             tw.show {
-                val content = tw.contentManager.contents.firstOrNull { it.component is GraphPanel } ?: return@show
-                tw.contentManager.setSelectedContent(content)
-                then(content.component as GraphPanel)
+                val tabs = tw.contentManager.contents.firstNotNullOfOrNull { it.component as? AtnTabs } ?: return@show
+                then(tabs.select<GraphPanel>() ?: return@show)
             }
         }
     }

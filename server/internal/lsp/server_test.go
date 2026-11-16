@@ -230,3 +230,54 @@ func TestUTF16(t *testing.T) {
 		t.Error("utf16 conversion")
 	}
 }
+
+// Template path completion sends the required-parameters block as a snippet
+// only to clients that declare snippetSupport (indented relative to the line,
+// for the client to adjust); plain text is absolute and inserted as-is.
+func TestTemplateCompletionSnippetSupport(t *testing.T) {
+	for _, snippets := range []bool{true, false} {
+		root := t.TempDir()
+		_ = os.Mkdir(filepath.Join(root, ".git"), 0o755)
+		_ = os.MkdirAll(filepath.Join(root, "t"), 0o755)
+		_ = os.WriteFile(filepath.Join(root, "t", "a.yml"), []byte("parameters:\n  - name: env\n    values: [dev, prod]\nsteps: []\n"), 0o644)
+		pipe := "steps:\n  - template: \n"
+		pipePath := filepath.Join(root, "p.yml")
+		_ = os.WriteFile(pipePath, []byte(pipe), 0o644)
+
+		cl := startServer(t)
+		var initRes map[string]interface{}
+		caps := map[string]interface{}{"textDocument": map[string]interface{}{"completion": map[string]interface{}{
+			"completionItem": map[string]interface{}{"snippetSupport": snippets}}}}
+		cl.call("initialize", map[string]interface{}{
+			"rootUri":               pathToURI(root),
+			"capabilities":          caps,
+			"initializationOptions": map[string]interface{}{"settings": map[string]interface{}{"repositories": map[string]interface{}{"autoFetch": false}}},
+		}, &initRes)
+		_ = cl.c.notify("initialized", map[string]interface{}{})
+		uri := pathToURI(pipePath)
+		_ = cl.c.notify("textDocument/didOpen", map[string]interface{}{"textDocument": map[string]interface{}{"uri": uri, "languageId": "yaml", "version": 1, "text": pipe}})
+
+		var comp struct {
+			Items []struct {
+				Label            string
+				InsertTextFormat int
+				InsertTextMode   int
+				TextEdit         struct{ NewText string }
+			}
+		}
+		cl.call("textDocument/completion", map[string]interface{}{"textDocument": map[string]string{"uri": uri}, "position": map[string]int{"line": 1, "character": 14}}, &comp)
+		if len(comp.Items) != 1 {
+			t.Fatalf("snippets=%v: items %+v", snippets, comp.Items)
+		}
+		it := comp.Items[0]
+		// plain: absolute indentation, inserted as-is; snippet: relative to the
+		// line, which the client indents (adjustIndentation)
+		want, format, mode := "t/a.yml\n    parameters:\n      env: ''", 0, 1
+		if snippets {
+			want, format, mode = "t/a.yml\n  parameters:\n    env: ${1|dev,prod|}$0", 2, 2
+		}
+		if it.TextEdit.NewText != want || it.InsertTextFormat != format || it.InsertTextMode != mode {
+			t.Errorf("snippets=%v: %+v", snippets, it)
+		}
+	}
+}

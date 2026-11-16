@@ -102,10 +102,7 @@ func Outline(lines []string) []*Symbol {
 		// top-level blocks with dedicated child parsing
 		if ind == 0 {
 			if m := outlineKeyRe.FindStringSubmatch(clean); m != nil && (m[2] == "parameters" || m[2] == "variables") && m[3] == "" {
-				end := BlockEnd(lines, i)
-				for end+1 < len(lines) && !IsBlank(lines[end+1]) && Indent(lines[end+1]) == 0 && strings.HasPrefix(lines[end+1], "-") {
-					end = BlockEnd(lines, end+1)
-				}
+				end := topSectionEnd(lines, i)
 				sec := &Symbol{Name: m[2], Kind: "section", Line: i, EndLine: end, SelStart: 0, SelEnd: len(m[2])}
 				if m[2] == "parameters" {
 					sec.Children = paramSymbols(lines, end)
@@ -186,6 +183,25 @@ func Outline(lines []string) []*Symbol {
 	return roots
 }
 
+// topSectionEnd is the last content line of the top-level block opened on
+// line start. Like ParseParameters, it skips blank lines and comments (at any
+// column) and lets column-0 `- ` items continue the block, so every parameter
+// ParseParameters returns lies inside the section.
+func topSectionEnd(lines []string, start int) int {
+	last := start
+	for i := start + 1; i < len(lines); i++ {
+		l := lines[i]
+		if IsBlank(l) || IsComment(l) {
+			continue
+		}
+		if Indent(l) == 0 && !strings.HasPrefix(l, "-") {
+			break
+		}
+		last = i
+	}
+	return last
+}
+
 func inSection(stack []outlineFrame, name string) bool {
 	return len(stack) > 0 && stack[0].sym.Kind == "section" && stack[0].sym.Name == name
 }
@@ -229,6 +245,9 @@ func paramSymbols(lines []string, end int) []*Symbol {
 		last := BlockEnd(lines, p.Line)
 		if last > end {
 			last = end
+		}
+		if last < p.Line {
+			last = p.Line
 		}
 		out = append(out, &Symbol{Name: p.Name, Detail: detail, Kind: "parameter", Line: p.Line, EndLine: last,
 			SelStart: p.NameCol, SelEnd: p.NameCol + len(p.Name)})

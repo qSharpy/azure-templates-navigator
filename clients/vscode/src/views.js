@@ -171,7 +171,7 @@ const STAT_ICON = {
 
 class StatsTreeProvider extends Base {
   async getChildren(element) {
-    if (element) return element.rows.map(row => ({ row }));
+    if (element) return (element.section ? element.rows : element.row.children || []).map(row => ({ row }));
     this.sections = (await this.request('atn/stats')) || [];
     return this.sections.map((s, i) => ({ section: s, rows: s.rows || [], index: i }));
   }
@@ -189,7 +189,8 @@ class StatsTreeProvider extends Base {
       return item;
     }
     const r = el.row;
-    const item = new vscode.TreeItem(r.label, vscode.TreeItemCollapsibleState.None);
+    const item = new vscode.TreeItem(r.label, r.children && r.children.length
+      ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
     item.description = r.description;
     item.tooltip = r.tooltip;
     const id = STAT_ICON[r.kind] || 'circle-small';
@@ -198,7 +199,7 @@ class StatsTreeProvider extends Base {
     item.iconPath = color ? new vscode.ThemeIcon(id, new vscode.ThemeColor(color)) : new vscode.ThemeIcon(id);
     item.contextValue = r.focus ? `stat-${r.focus}` : 'stat';
     if (r.filePath) {
-      item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: r.filePath }] };
+      item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: r.filePath, line: r.line }] };
     } else if (r.focus) {
       item.command = { command: 'azure-templates-navigator.showInGraph', title: 'Show in Graph', arguments: [el] };
     }

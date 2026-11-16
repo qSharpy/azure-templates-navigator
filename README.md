@@ -98,7 +98,7 @@ Each feature is computed once by `atn` and shown through the IDE's own UI.
 | Problems and fixes | Inspections + Alt+Enter; Diagnostics tab | Problems view + quick fixes |
 | Template graph | Graph tab (IntelliJ toolbar and menus) | Graph panel |
 | Graph filters: problems, kinds, repositories, callers/callees | *Only Problems*, *Filter* popup and direction combo in the Graph tab toolbar | Filter bar under the graph toolbar; direction next to *Depth* |
-| Most used / mis-called / unused templates, per-repository counts | Stats tab | Stats view |
+| Problems by type, most used / mis-called / unused templates, per-repository counts | Stats tab | Stats view |
 | Report a bug or an idea | Bug button in the Azure Templates tool window header; *Help → Report Azure Templates Navigator Issue…*; *Report to Azure Templates Navigator* in the IDE error dialog | *Help and Feedback* view in the Azure Templates sidebar; bug button on the Dependencies and Diagnostics views; *Azure Templates: Report Issue…* |
 
 ## Template graph and stats
@@ -122,6 +122,7 @@ With *Problems* or *Repositories*, the direct callers of what matches stay in th
 | Section | What it tells you |
 |---|---|
 | Overview | Pipelines, templates, external templates, repositories, errors, warnings, broken references |
+| Problems by type | Errors and warnings per kind (missing required parameter, unknown parameter, template not found…), most frequent first. Expand one for the files that have it; click a file to open its first one |
 | Most used | Call sites, files and pipelines reached: what a parameter change affects most |
 | Most mis-called | Call sites with parameter problems: often a confusing interface |
 | Calls the most templates | Wide templates that are hard to change and debug |
@@ -137,6 +138,7 @@ Click a row to open the file. *Show in Graph* centres the graph on that file, fi
 | `requiredParameterColor` | — (VS Code hovers only) | `#c92d35` |
 | `diagnostics.enabled` | Validate template call sites | `true` |
 | `diagnostics.unusedParameters` | Warn about unused template parameters | `true` |
+| `completion.requiredParameters` | Insert required parameters when completing a template path | `true` |
 | `graph.rootPath` | Workspace graph root | `""` |
 | `repositories.autoFetch` | Download repositories automatically | `true` |
 | `repositories.cacheDir` | Cache folder | `~/.azure-templates-navigator/repos` |

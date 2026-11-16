@@ -13,13 +13,22 @@
             <li><b>Find Usages</b>, <b>Call Hierarchy</b> and a <b>Code Vision</b> "N usages" hint on templates and their parameters — see which pipelines use a template before you change it</li>
             <li><b>Structure view</b> of pipelines: stages, jobs, steps, template calls, <code>${{ if }}</code> blocks and parameters</li>
             <li><b>Dependencies tree</b>, interactive <b>template graph</b>, project-wide <b>diagnostics</b> and <b>repositories</b> views</li>
-            <li><b>Stats</b> for template owners: most used and most mis-called templates, unused templates, per-repository counts</li>
+            <li><b>Stats</b> for template owners: problems by type, most used and most mis-called templates, unused templates, per-repository counts</li>
             <li><b>Help and feedback</b> from the bug button in the tool window: report a bug or suggest a feature on GitHub, with your versions filled in</li>
         </ul>
         <p>Powered by the same engine as the VS Code extension and the <code>atn</code> CLI, so behaviour is identical everywhere.</p>
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>2.4.0</h3>
+        <ul>
+            <li>IntelliJ 2026.3: the Graph, Diagnostics, Repositories and Stats tabs and the bug button are back (2026.3 moved the embedded browser into a separate plugin)</li>
+            <li>The tool window tabs are always visible: they wrap onto more rows instead of hiding behind a dropdown, and keep their order</li>
+            <li>Completing a template path adds the template's required parameters, with Tab between the values (Settings → Tools → Azure Templates Navigator → Completion to turn it off)</li>
+            <li>Stats: <i>Problems by type</i> under Overview. Expand a kind for the files that have it; click one to open its first problem.</li>
+            <li>Graph: the most used templates are drawn much bigger; the legend can be closed again</li>
+            <li>Structure view: no more errors for a blank line or comment inside <code>parameters:</code></li>
+        </ul>
         <h3>2.3.0</h3>
         <ul>
             <li>Graph nodes are sized by usage (callers + callees across the project); hover a node for its usages, the pipelines that reach it, and its problems</li>
@@ -58,6 +67,10 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>org.jetbrains.plugins.yaml</depends>
     <depends>com.redhat.devtools.lsp4ij</depends>
+    <!-- Since 2026.3 the JCEF API (JBCefBrowser, JBCefJSQuery) lives in this bundled plugin instead of
+         the platform core; without the dependency the Graph tab can't load its classes. Optional,
+         because older IDEs have JCEF in core and may not know this id. -->
+    <depends optional="true" config-file="atn-jcef.xml">com.intellij.modules.jcef</depends>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
         <server id="azureTemplatesNavigator"

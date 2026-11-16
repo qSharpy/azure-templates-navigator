@@ -345,6 +345,9 @@ type CompletionItem struct {
 	SortText      string `json:"sortText"`
 	Kind          string `json:"kind"` // property | value | file
 	FilterText    string `json:"filterText,omitempty"`
+	// Snippet is InsertText in LSP snippet syntax (tab stops on the inserted
+	// parameter values), for clients that support snippets. Empty = none.
+	Snippet string `json:"-"`
 	// Replace range (byte cols on the cursor line); -1 = word at cursor
 	ReplaceStart int `json:"-"`
 	ReplaceEnd   int `json:"-"`
@@ -366,7 +369,7 @@ func (e *Engine) Complete(path string, line, col int) []CompletionItem {
 
 	// 1. template path completion: "- template: <cursor>"
 	if m := templateKeyPrefixRe.FindStringIndex(text); m != nil && col >= m[1] {
-		return e.completeTemplatePaths(f, text, m[1], col)
+		return e.completeTemplatePaths(f, line, m[1], col)
 	}
 
 	ctx, ok := pipeline.FindCallSite(f.lines, line)
@@ -443,10 +446,16 @@ func (e *Engine) Complete(path string, line, col int) []CompletionItem {
 
 var templateKeyPrefixRe = regexp.MustCompile(`^\s*(?:-\s+)?template\s*:\s*`)
 
-func (e *Engine) completeTemplatePaths(f *fileInfo, text string, start, col int) []CompletionItem {
+func (e *Engine) completeTemplatePaths(f *fileInfo, line, start, col int) []CompletionItem {
 	_ = col
+	text := f.lines[line]
 	dir := filepath.Dir(f.path)
 	repoRoot := e.repoRoot(dir)
+	// Required parameters go in a new `parameters:` sibling of `template:`,
+	// unless the call already has one (in either order).
+	keyCol := strings.Index(text, "template")
+	addParams := e.settings.Completion.RequiredParameters && keyCol >= 0 &&
+		pipeline.StripComment(text) == strings.TrimRight(text, " \t") && pipeline.FindParametersLine(f.lines, line) < 0
 	var items []CompletionItem
 	for _, p := range e.workspaceFiles() {
 		if p == f.path || !strings.HasPrefix(p, repoRoot+string(filepath.Separator)) {
@@ -468,13 +477,77 @@ func (e *Engine) completeTemplatePaths(f *fileInfo, text string, start, col int)
 			label = abs
 		}
 		detail := fmt.Sprintf("%d parameter(s)", len(pf.params))
-		items = append(items, CompletionItem{Label: label, InsertText: label, Kind: "file", Detail: detail,
+		item := CompletionItem{Label: label, InsertText: label, Kind: "file", Detail: detail,
 			SortText: fmt.Sprintf("%03d_%s", strings.Count(label, "/"), label), FilterText: label,
-			ReplaceStart: start, ReplaceEnd: len(strings.TrimRight(pipeline.StripComment(text), " "))})
+			ReplaceStart: start, ReplaceEnd: len(strings.TrimRight(pipeline.StripComment(text), " "))}
+		if addParams {
+			if plain, snippet, names := requiredParamsBlock(pf.params, keyCol, pipeline.Indent(text)); names != nil {
+				item.InsertText = label + plain
+				item.Snippet = snippetEscape(label) + snippet
+				item.Detail += fmt.Sprintf(" · adds %d required", len(names))
+				item.Documentation = "Also adds the required parameters: " + codeList(names)
+			}
+		}
+		items = append(items, item)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].SortText < items[j].SortText })
 	if len(items) > 200 {
 		items = items[:200]
 	}
 	return items
+}
+
+// requiredParamsBlock is the `parameters:` block a template path completion
+// appends after the path: one entry per required parameter, at the template
+// key's column (as the "Add missing required parameters" quick fix writes it).
+// names is nil when nothing is required.
+//
+// plain has the literal values and absolute indentation (sent as-is).
+// snippet has tab stops on them (a choice when the values are restricted) and
+// indentation relative to the line's own (lineIndent): clients indent each
+// line of a snippet to the current line, VS Code with insertTextMode
+// adjustIndentation and LSP4IJ always (it turns snippets into IntelliJ live
+// templates, which ignore insertTextMode).
+func requiredParamsBlock(params []pipeline.Param, keyCol, lineIndent int) (plain, snippet string, names []string) {
+	keyIndent := strings.Repeat(" ", keyCol)
+	entryIndent := keyIndent + "  "
+	relKey := strings.Repeat(" ", keyCol-lineIndent)
+	relEntry := relKey + "  "
+	n := 0
+	for _, p := range params {
+		if !p.Required {
+			continue
+		}
+		n++
+		names = append(names, p.Name)
+		lit := pipeline.CanonicalLiteral(p.Type)
+		plain += "\n" + entryIndent + p.Name + ": " + lit
+		vals := p.Values
+		if len(vals) == 0 && strings.EqualFold(p.Type, "boolean") {
+			vals = []string{"true", "false"}
+		}
+		if len(vals) > 0 {
+			esc := make([]string, len(vals))
+			for i, v := range vals {
+				esc[i] = choiceEscape(yamlScalar(v))
+			}
+			snippet += fmt.Sprintf("\n%s%s: ${%d|%s|}", relEntry, snippetEscape(p.Name), n, strings.Join(esc, ","))
+		} else {
+			snippet += fmt.Sprintf("\n%s%s: ${%d:%s}", relEntry, snippetEscape(p.Name), n, snippetEscape(lit))
+		}
+	}
+	if n == 0 {
+		return "", "", nil
+	}
+	return "\n" + keyIndent + "parameters:" + plain, "\n" + relKey + "parameters:" + snippet + "$0", names
+}
+
+// LSP snippet escaping: `$`, `}` and `\` outside placeholders; also `,` and
+// `|` inside a choice.
+func snippetEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `$`, `\$`, `}`, `\}`).Replace(s)
+}
+
+func choiceEscape(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `$`, `\$`, `}`, `\}`, `,`, `\,`, `|`, `\|`).Replace(s)
 }

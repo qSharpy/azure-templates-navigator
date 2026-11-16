@@ -15,6 +15,9 @@ import com.google.gson.JsonObject
 import com.intellij.icons.AllIcons
 import com.intellij.ide.actions.RevealFileAction
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.diagnostic.ControlFlowException
+import com.intellij.openapi.diagnostic.logger
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
@@ -34,10 +37,22 @@ import com.intellij.openapi.wm.ToolWindowFactory
 import com.intellij.ui.ColoredTreeCellRenderer
 import com.intellij.ui.PopupHandler
 import com.intellij.ui.ScrollPaneFactory
+import com.intellij.ui.JBColor
 import com.intellij.ui.SimpleTextAttributes
+import com.intellij.ui.components.JBLabel
 import com.intellij.ui.content.ContentFactory
 import com.intellij.ui.treeStructure.Tree
+import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.WrapLayout
 import com.intellij.util.ui.tree.TreeUtil
+import java.awt.BorderLayout
+import java.awt.CardLayout
+import java.awt.FlowLayout
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
+import java.awt.event.FocusAdapter
+import java.awt.event.FocusEvent
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
@@ -45,25 +60,161 @@ import java.awt.event.MouseEvent
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import javax.swing.Icon
+import javax.swing.JComponent
+import javax.swing.JPanel
 import javax.swing.JTree
+import javax.swing.SwingConstants
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
 class AtnToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val cf = ContentFactory.getInstance()
-        fun add(title: String, panel: SimpleToolWindowPanel) {
-            val content = cf.createContent(panel, title, false)
-            if (panel is Disposable) content.setDisposer(panel)
-            toolWindow.contentManager.addContent(content)
-        }
-        add("Dependencies", DependenciesPanel(project))
-        add("Graph", GraphPanel(project))
-        add("Diagnostics", DiagnosticsPanel(project))
-        add("Repositories", RepositoriesPanel(project))
-        add("Stats", StatsPanel(project))
-        // A bug button in the tool window header, visible on every tab.
+        // A bug button in the tool window header, visible on every tab. Set first,
+        // so it is there even when a tab fails.
         toolWindow.setTitleActions(listOfNotNull(ActionManager.getInstance().getAction("AzureTemplatesNavigator.ReportIssue")))
+        val tabs = AtnTabs()
+        // Each tab is built on its own: one that throws (JCEF unavailable, an API
+        // changed in a newer IDE) shows its error instead of hiding every tab after it.
+        fun add(title: String, create: () -> SimpleToolWindowPanel) {
+            val panel = try {
+                create()
+            } catch (e: Throwable) {
+                if (e is ControlFlowException) throw e
+                LOG.error("[atn] the $title tab could not be created", e)
+                FailedTabPanel(title, e)
+            }
+            tabs.addTab(title, panel)
+        }
+        add("Dependencies") { DependenciesPanel(project) }
+        add("Graph") { GraphPanel(project) }
+        add("Diagnostics") { DiagnosticsPanel(project) }
+        add("Repositories") { RepositoriesPanel(project) }
+        add("Stats") { StatsPanel(project) }
+        val content = ContentFactory.getInstance().createContent(tabs, "", false)
+        content.setDisposer(tabs)
+        toolWindow.contentManager.addContent(content)
+    }
+
+    companion object {
+        private val LOG = logger<AtnToolWindowFactory>()
+    }
+}
+
+/**
+ * The tool window's tabs. They live in the panel rather than in the tool window
+ * header: header tabs that don't fit are hidden behind a dropdown, while this
+ * strip wraps onto another row, so every tab stays one click away at any width.
+ * The tabs keep their order when wrapped (a JTabbedPane moves the selected row
+ * next to the content, so rows swap on every click).
+ */
+class AtnTabs : JPanel(BorderLayout()), Disposable {
+    private val strip = JPanel(WrapLayout(FlowLayout.LEFT, JBUI.scale(2), JBUI.scale(2))).apply {
+        isOpaque = false
+        border = JBUI.Borders.compound(
+            JBUI.Borders.customLine(JBColor.border(), 0, 0, 1, 0),
+            JBUI.Borders.empty(2, 4),
+        )
+    }
+    private val cards = CardLayout()
+    private val body = JPanel(cards)
+    private val tabs = mutableListOf<Pair<TabButton, JComponent>>()
+
+    init {
+        add(strip, BorderLayout.NORTH)
+        add(body, BorderLayout.CENTER)
+    }
+
+    fun addTab(title: String, panel: JComponent) {
+        val key = tabs.size.toString()
+        val button = TabButton(title) { selectIndex(tabs.indexOfFirst { it.second === panel }) }
+        tabs += button to panel
+        strip.add(button)
+        body.add(panel, key)
+        if (panel is Disposable) Disposer.register(this, panel)
+        if (tabs.size == 1) selectIndex(0)
+    }
+
+    private fun selectIndex(i: Int) {
+        if (i !in tabs.indices) return
+        tabs.forEachIndexed { j, (b, _) -> b.selected = j == i }
+        cards.show(body, i.toString())
+    }
+
+    /** Selects the first tab whose panel is a [T] and returns that panel. */
+    inline fun <reified T : JComponent> select(): T? = select(T::class.java)
+
+    fun <T : JComponent> select(type: Class<T>): T? {
+        val i = tabs.indexOfFirst { type.isInstance(it.second) }
+        if (i < 0) return null
+        selectIndex(i)
+        return type.cast(tabs[i].second)
+    }
+
+    override fun dispose() {}
+
+    /** One tab: plain text, a rounded highlight when selected or hovered. Focusable; Enter or Space selects it. */
+    private class TabButton(text: String, private val onSelect: () -> Unit) : JBLabel(text) {
+        var selected = false
+            set(v) { field = v; repaint() }
+        private var hover = false
+
+        init {
+            border = JBUI.Borders.empty(4, 10)
+            isFocusable = true
+            getAccessibleContext().accessibleName = text
+            addMouseListener(object : MouseAdapter() {
+                override fun mousePressed(e: MouseEvent) { onSelect(); requestFocusInWindow() }
+                override fun mouseEntered(e: MouseEvent) { hover = true; repaint() }
+                override fun mouseExited(e: MouseEvent) { hover = false; repaint() }
+            })
+            addKeyListener(object : KeyAdapter() {
+                override fun keyPressed(e: KeyEvent) {
+                    if (e.keyCode == KeyEvent.VK_ENTER || e.keyCode == KeyEvent.VK_SPACE) onSelect()
+                }
+            })
+            addFocusListener(object : FocusAdapter() {
+                override fun focusGained(e: FocusEvent) = repaint()
+                override fun focusLost(e: FocusEvent) = repaint()
+            })
+        }
+
+        override fun paintComponent(g: Graphics) {
+            val bg = when {
+                selected -> JBUI.CurrentTheme.ActionButton.pressedBackground()
+                hover -> JBUI.CurrentTheme.ActionButton.hoverBackground()
+                else -> null
+            }
+            val g2 = g.create() as Graphics2D
+            try {
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+                val arc = JBUI.scale(8)
+                if (bg != null) {
+                    g2.color = bg
+                    g2.fillRoundRect(0, 0, width, height, arc, arc)
+                }
+                if (isFocusOwner) {
+                    g2.color = JBUI.CurrentTheme.Focus.focusColor()
+                    g2.drawRoundRect(0, 0, width - 1, height - 1, arc, arc)
+                }
+            } finally {
+                g2.dispose()
+            }
+            super.paintComponent(g)
+        }
+    }
+}
+
+/** Shown in place of a tab whose panel threw while being created. */
+class FailedTabPanel(title: String, error: Throwable) : SimpleToolWindowPanel(true, true) {
+    init {
+        val reason = (error.message ?: error.javaClass.simpleName).let { StringUtil.escapeXmlEntities(it) }
+        setContent(JBLabel(
+            "<html>The $title tab could not be created:<br><br><code>${error.javaClass.name}: $reason</code><br><br>" +
+                "Please report it with the bug button above (the IDE log has the full stack trace: Help → Show Log).</html>"
+        ).apply {
+            border = JBUI.Borders.empty(12)
+            verticalAlignment = SwingConstants.TOP
+        })
     }
 }
 
@@ -356,9 +507,24 @@ class StatsPanel(project: Project) : ServerTreePanel(project) {
     private fun icon(r: JsonObject): Icon = when (r.str("kind")) {
         "error", "missing" -> AllIcons.General.Error
         "warning" -> AllIcons.General.Warning
+        "info" -> AllIcons.General.Information
         "pipeline" -> AllIcons.Actions.Execute
         "external", "repo" -> if (r.int("severity") == 1) AllIcons.General.Error else AllIcons.Nodes.Module
         else -> if (r.int("severity") == 1) AllIcons.General.Error else if (r.int("severity") == 2) AllIcons.General.Warning else AllIcons.FileTypes.Yaml
+    }
+
+    /** A row, with its children (the files under a problem type) nested below it. */
+    private fun rowNode(r: JsonObject): DefaultMutableTreeNode {
+        val open: (() -> Unit)? = when {
+            r.str("filePath").isNotEmpty() -> { { service.openFile(r.str("filePath"), r.int("line")) } }
+            r.str("focus").isNotEmpty() -> { { showInGraph(r) } }
+            else -> null
+        }
+        val node = DefaultMutableTreeNode(Item(r.str("label"), r.str("description"), icon(r),
+            r.str("tooltip").ifEmpty { null }?.let { "<html>" + StringUtil.escapeXmlEntities(it).replace("\n", "<br>") + "</html>" },
+            data = r, open = open))
+        for (c in r.list("children")) node.add(rowNode(c))
+        return node
     }
 
     override fun build(root: DefaultMutableTreeNode, json: JsonElement?) {
@@ -369,16 +535,7 @@ class StatsPanel(project: Project) : ServerTreePanel(project) {
         }
         for (s in sections) {
             val node = DefaultMutableTreeNode(Item(s.str("label"), s.str("description"), null, s.str("tooltip").ifEmpty { null }))
-            for (r in s.list("rows")) {
-                val open: (() -> Unit)? = when {
-                    r.str("filePath").isNotEmpty() -> { { service.openFile(r.str("filePath")) } }
-                    r.str("focus").isNotEmpty() -> { { showInGraph(r) } }
-                    else -> null
-                }
-                node.add(DefaultMutableTreeNode(Item(r.str("label"), r.str("description"), icon(r),
-                    r.str("tooltip").ifEmpty { null }?.let { "<html>" + com.intellij.openapi.util.text.StringUtil.escapeXmlEntities(it).replace("\n", "<br>") + "</html>" },
-                    data = r, open = open)))
-            }
+            for (r in s.list("rows")) node.add(rowNode(r))
             root.add(node)
         }
     }

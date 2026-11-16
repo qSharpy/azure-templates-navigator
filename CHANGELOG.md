@@ -3,6 +3,25 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [2.4.0] — 2026-11-16
+
+### Added
+
+- **Completing a template path adds its required parameters.** Pick a template after `template:` and a `parameters:` block with every required parameter comes with it, lined up under `template:`. Tab moves between the values; allowed values and booleans are offered as a choice. Nothing is added when the call already has `parameters:`. Turn it off with `completion.requiredParameters` (IntelliJ: Settings → Tools → Azure Templates Navigator → Completion).
+- **Stats: Problems by type**, right under Overview. Errors and warnings per kind (missing required parameter, unknown parameter, type mismatch, value not allowed, template not found, …), most frequent first. Expand a kind for the files that have it, most first; click a file to open its first one. `atn/stats` rows can now have `children` and a `line`.
+
+### Changed
+
+- **IntelliJ: the tool window's tabs are always visible.** They moved from the tool window header, where IntelliJ hides the tabs that don't fit behind a dropdown, into a tab strip that wraps onto more rows when the tool window is narrow. The tabs keep their order.
+
+- **Hubs stand out more in the graph.** The size scale is steeper and its cap is twice as high, so a template used by 100 files is about twice as big as before. Before, everything above about 40 callers + callees drew at the same size. Sizes still follow workspace-wide numbers, so a node keeps its size whatever the scope, depth or filters. *Fit* now leaves room for the biggest nodes.
+
+### Fixed
+
+- **"Request textDocument/documentSymbol failed: selectionRange must be contained in fullRange"** in VS Code ([#7](https://github.com/qSharpy/azure-templates-navigator/issues/7)). A blank line or a column-0 comment inside top-level `parameters:` ended the section early in the outline, so parameters after it got an end line before their start line. Variables after such a comment were missing from the outline. The server now also clamps every symbol range, so one bad symbol can't break the whole outline.
+- **IntelliJ 2026.3: only the Dependencies tab showed up, with no bug button.** IntelliJ 2026.3 moved the embedded browser (JCEF) out of the platform into the bundled *Web Browser (JCEF)* plugin, so the Graph tab couldn't load its classes. The plugin now declares that dependency (optional, so older IDEs are unaffected). The failing Graph tab also stopped every tab after it from being added. Each tab is now created on its own, and a tab that fails explains why in place. The bug button is set up first.
+- **The graph legend couldn't be closed** ([#8](https://github.com/qSharpy/azure-templates-navigator/issues/8)). Its size icons stretched to the size of the graph, pushing the toggle out of view. The legend now never grows taller than the graph, and scrolls when it has to.
+
 ## [2.3.0] — 2026-11-16
 
 ### Added

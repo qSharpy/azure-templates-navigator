@@ -40,12 +40,31 @@ func (s *Server) documentSymbols(raw json.RawMessage) interface{} {
 	conv = func(syms []*pipeline.Symbol) []interface{} {
 		out := make([]interface{}, 0, len(syms))
 		for _, sy := range syms {
-			endText := s.eng.LineText(path, sy.EndLine)
+			// VS Code rejects the whole response if any selectionRange falls
+			// outside its range, so keep the invariant here whatever the outline says.
+			endLine := sy.EndLine
+			if endLine < sy.Line {
+				endLine = sy.Line
+			}
+			endText := s.eng.LineText(path, endLine)
+			selStart, selEnd := sy.SelStart, sy.SelEnd
+			if selStart < 0 {
+				selStart = 0
+			}
+			if selEnd < selStart {
+				selEnd = selStart
+			}
+			if endLine == sy.Line && selEnd > len(endText) {
+				selEnd = len(endText)
+				if selStart > selEnd {
+					selStart = selEnd
+				}
+			}
 			m := map[string]interface{}{
 				"name":           nonEmpty(sy.Name, sy.Kind),
 				"kind":           symbolKinds[sy.Kind],
-				"range":          s.rangeOf(path, sy.Line, 0, sy.EndLine, len(endText)),
-				"selectionRange": s.rangeOf(path, sy.Line, sy.SelStart, sy.Line, sy.SelEnd),
+				"range":          s.rangeOf(path, sy.Line, 0, endLine, len(endText)),
+				"selectionRange": s.rangeOf(path, sy.Line, selStart, sy.Line, selEnd),
 				"children":       conv(sy.Children),
 			}
 			if sy.Detail != "" {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,7 @@ type Server struct {
 	reqID    int
 	shutdown bool
 	watchReg bool
+	snippets bool // client accepts snippet completions
 
 	// pubMu serialises publish runs so an older run can never overwrite the
 	// diagnostics of a newer one.
@@ -349,6 +351,13 @@ type initParams struct {
 				DynamicRegistration bool `json:"dynamicRegistration"`
 			} `json:"didChangeWatchedFiles"`
 		} `json:"workspace"`
+		TextDocument struct {
+			Completion struct {
+				CompletionItem struct {
+					SnippetSupport bool `json:"snippetSupport"`
+				} `json:"completionItem"`
+			} `json:"completion"`
+		} `json:"textDocument"`
 	} `json:"capabilities"`
 }
 
@@ -373,6 +382,7 @@ func (s *Server) initialize(raw json.RawMessage) (interface{}, *rpcError) {
 	}
 	s.cf = p.InitializationOptions.Client
 	s.watchReg = p.Capabilities.Workspace.DidChangeWatchedFiles.DynamicRegistration
+	s.snippets = p.Capabilities.TextDocument.Completion.CompletionItem.SnippetSupport
 	s.eng = engine.New(roots, engine.ParseSettings(p.InitializationOptions.Settings))
 	s.eng.Log = func(msg string) { s.logf("%s", msg) }
 	s.eng.Repos.OnChange(func() {
@@ -648,6 +658,16 @@ func (s *Server) completion(raw json.RawMessage) interface{} {
 				},
 				"newText": it.InsertText,
 			},
+		}
+		if it.Snippet != "" && s.snippets {
+			// Snippet lines are indented relative to the current line; the
+			// client adds the line's indentation (LSP4IJ does so regardless).
+			m["textEdit"].(map[string]interface{})["newText"] = it.Snippet
+			m["insertTextFormat"] = 2 // snippet
+			m["insertTextMode"] = 2   // adjustIndentation
+		} else if strings.Contains(it.InsertText, "\n") {
+			// Plain text carries its own (absolute) indentation.
+			m["insertTextMode"] = 1 // asIs
 		}
 		if it.FilterText != "" {
 			m["filterText"] = it.FilterText

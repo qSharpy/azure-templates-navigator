@@ -351,6 +351,9 @@ type StatRow struct {
 	Focus       string `json:"focus,omitempty"`
 	Value       int    `json:"value"`
 	Severity    int    `json:"severity,omitempty"`
+	Line        int    `json:"line,omitempty"` // 0-based line to open FilePath at
+	// Children: rows shown under this one (files with a problem type).
+	Children []StatRow `json:"children,omitempty"`
 }
 
 // StatSection is a group of rows ("Most used", ...).
@@ -428,13 +431,32 @@ func (e *Engine) Stats() []StatSection {
 		return r
 	}
 
-	// ── Overview
+	// ── Overview (and the per-type counts of Problems by type)
 	var pipelines, templates int
 	var errors, warnings, errFiles, warnFiles int
+	byCode := map[string]*codeStat{}
 	for _, p := range files {
 		f := e.file(p)
 		if f == nil {
 			continue
+		}
+		for _, dg := range e.diagnose(p) {
+			if dg.Severity != SevError && dg.Severity != SevWarning {
+				continue
+			}
+			cs := byCode[dg.Code]
+			if cs == nil {
+				cs = &codeStat{sev: dg.Severity, files: map[string]int{}, first: map[string]int{}}
+				byCode[dg.Code] = cs
+			}
+			cs.n++
+			if dg.Severity < cs.sev {
+				cs.sev = dg.Severity
+			}
+			if _, ok := cs.files[p]; !ok {
+				cs.first[p] = dg.Line
+			}
+			cs.files[p]++
 		}
 		if f.isPipeline {
 			pipelines++
@@ -476,6 +498,8 @@ func (e *Engine) Stats() []StatSection {
 		{Label: "Broken references", Description: fmt.Sprint(broken), Value: broken, Kind: "missing", Focus: "problems",
 			Tooltip: "Template references that point to a missing file, an undeclared alias or an unavailable repository"},
 	}}
+
+	byType := e.problemsByType(byCode, fileRow)
 
 	// ── Most used (by call sites, like the "N usages" code lens)
 	var used []string
@@ -656,7 +680,96 @@ func (e *Engine) Stats() []StatSection {
 	misCalled.Description = fmt.Sprint(len(mis))
 	fanOut.Description = fmt.Sprint(len(fans))
 	byRepo.Description = fmt.Sprint(len(byRepo.Rows))
-	return []StatSection{overview, mostUsed, misCalled, fanOut, unused, byRepo}
+	return []StatSection{overview, byType, mostUsed, misCalled, fanOut, unused, byRepo}
+}
+
+// codeStat counts one diagnostic code over the workspace.
+type codeStat struct {
+	n     int
+	sev   int            // most severe seen
+	files map[string]int // path → count
+	first map[string]int // path → line of the first one
+}
+
+// problemTypes names the diagnostic codes in the Stats view, with a sentence
+// for the tooltip. Codes not listed show under their code.
+var problemTypes = map[string][2]string{
+	CodeMissingRequired: {"Missing required parameter", "A call doesn't pass a parameter the template requires."},
+	CodeUnknownParam:    {"Unknown parameter", "A call passes a parameter the template doesn't declare (often a typo)."},
+	CodeTypeMismatch:    {"Type mismatch", "A call passes a value of the wrong type, like text for a boolean."},
+	CodeValueNotAllowed: {"Value not allowed", "A call passes a value outside the parameter's allowed values."},
+	CodeUnusedParam:     {"Unused parameter", "A template declares a parameter it never uses."},
+	CodeUndeclaredParam: {"Undeclared parameter", "A template uses ${{ parameters.x }} without declaring x."},
+	CodeTemplateMissing: {"Template not found", "A call points to a template file that doesn't exist."},
+	CodeUnknownAlias:    {"Unknown repository alias", "A call uses @alias without a matching resources.repositories entry."},
+	CodeRepoUnavailable: {"Repository unavailable", "A template comes from a repository that couldn't be fetched or found locally."},
+}
+
+const statTypeFilesMax = 25
+
+// problemsByType is the "Problems by type" section: one row per diagnostic
+// code (errors and warnings), most frequent first, with the files that have
+// it underneath (most first; clicking one opens its first such problem).
+func (e *Engine) problemsByType(byCode map[string]*codeStat, fileRow func(path, kind string) StatRow) StatSection {
+	codes := make([]string, 0, len(byCode))
+	for c := range byCode {
+		codes = append(codes, c)
+	}
+	sort.Slice(codes, func(i, j int) bool {
+		a, b := byCode[codes[i]], byCode[codes[j]]
+		if a.n != b.n {
+			return a.n > b.n
+		}
+		return codes[i] < codes[j]
+	})
+	sec := StatSection{ID: "problemsByType", Label: "Problems by type",
+		Tooltip: "Errors and warnings grouped by kind, most frequent first. Expand one to see the files that have it.", Rows: []StatRow{}}
+	for _, c := range codes {
+		cs := byCode[c]
+		name, why := c, ""
+		if t, ok := problemTypes[c]; ok {
+			name, why = t[0], t[1]
+		}
+		kind := "warning"
+		if cs.sev == SevError {
+			kind = "error"
+		}
+		r := StatRow{Label: name, Kind: kind, Value: cs.n, Severity: cs.sev,
+			Description: fmt.Sprintf("%d in %s", cs.n, count(len(cs.files), "file")),
+			Tooltip:     strings.TrimSpace(why + "\nCode: " + c)}
+		paths := make([]string, 0, len(cs.files))
+		for p := range cs.files {
+			paths = append(paths, p)
+		}
+		sort.Slice(paths, func(i, j int) bool {
+			if cs.files[paths[i]] != cs.files[paths[j]] {
+				return cs.files[paths[i]] > cs.files[paths[j]]
+			}
+			return paths[i] < paths[j]
+		})
+		for i, p := range paths {
+			if i == statTypeFilesMax {
+				r.Children = append(r.Children, StatRow{Label: fmt.Sprintf("and %s more", count(len(paths)-i, "file")), Kind: "info"})
+				break
+			}
+			fr := fileRow(p, "template")
+			if f := e.file(p); f != nil && f.isPipeline {
+				fr.Kind = "pipeline"
+			}
+			fr.Value = cs.files[p]
+			fr.Line = cs.first[p]
+			fr.Severity = cs.sev
+			fr.Description = fmt.Sprint(cs.files[p])
+			if dir := filepath.ToSlash(filepath.Dir(e.relPath(p))); dir != "." {
+				fr.Description += " · " + dir
+			}
+			r.Children = append(r.Children, fr)
+		}
+		disambiguate(e, r.Children)
+		sec.Rows = append(sec.Rows, r)
+	}
+	sec.Description = count(len(codes), "type")
+	return sec
 }
 
 // disambiguate labels rows that share a file name with their relative path.

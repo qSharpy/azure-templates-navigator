@@ -27,6 +27,11 @@ type Settings struct {
 	Graph struct {
 		RootPath string `json:"rootPath"`
 	} `json:"graph"`
+	Completion struct {
+		// RequiredParameters: completing a template path also inserts a
+		// `parameters:` block with the template's required parameters.
+		RequiredParameters bool `json:"requiredParameters"`
+	} `json:"completion"`
 	Repositories repos.Config `json:"repositories"`
 }
 
@@ -36,6 +41,7 @@ func DefaultSettings() Settings {
 	s.RequiredParameterColor = "#c92d35"
 	s.Diagnostics.Enabled = true
 	s.Diagnostics.UnusedParameters = true
+	s.Completion.RequiredParameters = true
 	s.Repositories = repos.DefaultConfig()
 	return s
 }

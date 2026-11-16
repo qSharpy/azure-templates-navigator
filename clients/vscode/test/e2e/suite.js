@@ -44,6 +44,26 @@ async function run() {
   console.log('completions:', comp.items.slice(0, 5).map(i => typeof i.label === 'string' ? i.label : i.label.label).join(', '));
   assert.ok(comp.items.length > 0);
 
+  // 3b. accepting a template path completion also adds the required parameters,
+  //     lined up under `template:` (VS Code must not re-indent them). Edited in memory, then reverted.
+  {
+    const editor = vscode.window.activeTextEditor;
+    const at = doc.getText().split('\n').findIndex(l => l.includes('- template: templates/notify-teams.yml'));
+    const indent = doc.lineAt(at).text.match(/^\s*/)[0];
+    const typed = `${indent}- template: templates/notify-te`;
+    await editor.edit(e => e.insert(new vscode.Position(at, 0), typed + '\n'));
+    editor.selection = new vscode.Selection(at, typed.length, at, typed.length);
+    await vscode.commands.executeCommand('editor.action.triggerSuggest');
+    await sleep(1500);
+    await vscode.commands.executeCommand('acceptSelectedSuggestion');
+    await sleep(500);
+    const got = [0, 1, 2].map(i => doc.lineAt(at + i).text);
+    console.log('accepted completion:', JSON.stringify(got));
+    const key = ' '.repeat(indent.length + 2);
+    assert.deepStrictEqual(got, [`${indent}- template: templates/notify-teams.yml`, `${key}parameters:`, `${key}  message: ''`]);
+    await vscode.commands.executeCommand('workbench.action.files.revert');
+  }
+
   // 4. quick fixes for a diagnostic
   const missing = diags.find(d => d.code === 'missing-required-param');
   const actions = await vscode.commands.executeCommand('vscode.executeCodeActionProvider', uri, missing.range);
@@ -96,7 +116,7 @@ async function run() {
   const sections = await waitFor(() => api.request('atn/stats'));
   console.log('stats:', sections.map(s => `${s.id}=${s.rows.length}`).join(', '));
   const byId = Object.fromEntries(sections.map(s => [s.id, s]));
-  for (const id of ['overview', 'mostUsed', 'misCalled', 'fanOut', 'unused', 'repositories']) assert.ok(byId[id], id);
+  for (const id of ['overview', 'problemsByType', 'mostUsed', 'misCalled', 'fanOut', 'unused', 'repositories']) assert.ok(byId[id], id);
   assert.ok(byId.mostUsed.rows.length > 0 && byId.mostUsed.rows[0].focus === 'file');
   assert.ok(byId.unused.rows.some(r => r.filePath.endsWith('stale-template.yml')), 'stale-template.yml is unused');
   const roots = await api.stats.getChildren();
