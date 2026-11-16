@@ -254,6 +254,8 @@ func TestTemplateCompletionSnippetSupport(t *testing.T) {
 			"initializationOptions": map[string]interface{}{"settings": map[string]interface{}{"repositories": map[string]interface{}{"autoFetch": false}}},
 		}, &initRes)
 		_ = cl.c.notify("initialized", map[string]interface{}{})
+		// the initial scan runs in the background; t/a.yml is only offered once it is indexed
+		cl.waitNote("window/logMessage", func(m *message) bool { return strings.Contains(string(m.Params), "indexed") })
 		uri := pathToURI(pipePath)
 		_ = cl.c.notify("textDocument/didOpen", map[string]interface{}{"textDocument": map[string]interface{}{"uri": uri, "languageId": "yaml", "version": 1, "text": pipe}})
 
