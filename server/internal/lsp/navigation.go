@@ -136,18 +136,65 @@ func (s *Server) codeLens(raw json.RawMessage) interface{} {
 	out := []interface{}{}
 	for _, l := range s.eng.CodeLenses(path) {
 		r := s.rangeOf(path, l.Line, l.Col, l.Line, l.Col)
-		out = append(out, map[string]interface{}{
-			"range": r,
-			"command": map[string]interface{}{
-				"title":   l.Title,
-				"command": s.cf.CommandPrefix + "showUsages",
-				"arguments": []interface{}{map[string]interface{}{
-					"uri": pathToURI(path), "line": l.Line, "character": 0,
-				}},
-			},
-		})
+		cmd := map[string]interface{}{
+			"title":   l.Title,
+			"command": s.cf.CommandPrefix + "showUsages",
+			"arguments": []interface{}{map[string]interface{}{
+				"uri": pathToURI(path), "line": l.Line, "character": 0,
+			}},
+		}
+		if l.Kind == "pipeline" {
+			cmd["command"] = s.cf.CommandPrefix + "showPipelineProblems"
+			cmd["arguments"] = []interface{}{map[string]interface{}{"uri": pathToURI(path)}}
+		}
+		out = append(out, map[string]interface{}{"range": r, "command": cmd})
 	}
 	return out
+}
+
+// pipelineCheck answers atn/pipelineCheck: the verdict of one root pipeline
+// (path set), or of every root pipeline in the workspace. Problem positions
+// are LSP positions (UTF-16), with the file's URI.
+func (s *Server) pipelineCheck(path string) interface{} {
+	type problem struct {
+		URI          string   `json:"uri"`
+		RelativePath string   `json:"relativePath"`
+		Range        lspRange `json:"range"`
+		Severity     int      `json:"severity"`
+		Code         string   `json:"code"`
+		Message      string   `json:"message"`
+	}
+	type report struct {
+		URI          string    `json:"uri"`
+		RelativePath string    `json:"relativePath"`
+		Title        string    `json:"title"`
+		Errors       int       `json:"errors"`
+		Warnings     int       `json:"warnings"`
+		Templates    int       `json:"templates"`
+		Dynamic      int       `json:"dynamic"`
+		Problems     []problem `json:"problems"`
+	}
+	conv := func(r engine.PipelineReport) report {
+		out := report{URI: pathToURI(r.Path), RelativePath: r.RelativePath, Title: r.Title(), Errors: r.Errors, Warnings: r.Warnings,
+			Templates: r.Templates, Dynamic: r.Dynamic, Problems: []problem{}}
+		for _, p := range r.Problems {
+			out.Problems = append(out.Problems, problem{URI: pathToURI(p.Path), RelativePath: p.RelativePath,
+				Range: s.rangeOf(p.Path, p.Line, p.StartCol, p.EndLine, p.EndCol), Severity: p.Severity, Code: p.Code, Message: p.Message})
+		}
+		return out
+	}
+	if path != "" {
+		r, ok := s.eng.PipelineCheck(path)
+		if !ok {
+			return nil
+		}
+		return conv(r)
+	}
+	all := []report{}
+	for _, r := range s.eng.PipelineChecks() {
+		all = append(all, conv(r))
+	}
+	return all
 }
 
 func (s *Server) hierarchyItem(it engine.HierarchyItem) map[string]interface{} {

@@ -78,7 +78,8 @@ type fileInfo struct {
 	refs       []pipeline.TemplateRef
 	repos      map[string]pipeline.RepoDecl
 	isPipeline bool
-	relevant   bool // looks like Azure Pipelines YAML (not a k8s manifest, GitHub workflow, ...)
+	kind       string // what the file provides: stages | jobs | steps | variables | extends | ""
+	relevant   bool   // looks like Azure Pipelines YAML (not a k8s manifest, GitHub workflow, ...)
 	modTime    time.Time
 	size       int64
 	fromDisk   bool
@@ -423,6 +424,7 @@ func parseFile(path, text string) *fileInfo {
 		refs:       pipeline.FindTemplateRefs(lines),
 		repos:      pipeline.ParseRepositories(lines),
 		isPipeline: pipeline.IsPipelineRoot(lines),
+		kind:       pipeline.TemplateKind(lines),
 		relevant:   pipeline.LooksLikeAzurePipelines(lines),
 	}
 }
@@ -544,12 +546,20 @@ func (e *Engine) relink(p string, checkTargets bool) {
 	old := e.forward[p]
 	oldSig := e.snaps[p].sig
 	e.unlinkFile(p)
-	e.invalidateDiag(p)
-	for c := range e.reverse[p] {
-		e.invalidateDiag(c) // callers check their arguments against p's parameters
-	}
+	// Callers check their arguments against p's parameters, and a root
+	// pipeline's checks cover every template it reaches.
+	e.invalidateWithAncestors(p)
 	if f := e.linkable(p); f != nil {
 		e.linkFile(f)
+	}
+	// A target that gained or lost p as a caller may have stopped (or
+	// started) being a root pipeline.
+	for _, eds := range [][]edge{old, e.forward[p]} {
+		for _, ed := range eds {
+			if ed.target != "" {
+				e.invalidateDiag(ed.target)
+			}
+		}
 	}
 	if !sameEdges(old, e.forward[p]) || oldSig != e.snaps[p].sig {
 		e.version++
@@ -600,6 +610,24 @@ func (e *Engine) unlinkFile(p string) {
 	delete(e.snaps, p)
 }
 
+// invalidateWithAncestors invalidates the diagnostics of p and of every file
+// that reaches p through template references.
+func (e *Engine) invalidateWithAncestors(p string) {
+	seen := map[string]bool{p: true}
+	queue := []string{p}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		e.invalidateDiag(cur)
+		for c := range e.reverse[cur] {
+			if !seen[c] {
+				seen[c] = true
+				queue = append(queue, c)
+			}
+		}
+	}
+}
+
 func (e *Engine) invalidateDiag(p string) {
 	delete(e.diagCache, p)
 	e.diagDirty[p] = true
@@ -635,7 +663,8 @@ func fileSig(f *fileInfo) string {
 	b, _ := json.Marshal(struct {
 		P []pipeline.Param
 		R bool
-	}{f.params, f.isPipeline})
+		K string
+	}{f.params, f.isPipeline, f.kind})
 	return string(b)
 }
 

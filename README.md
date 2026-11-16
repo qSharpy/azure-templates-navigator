@@ -34,6 +34,32 @@ only start the binary, render the custom views, and map settings.
 | `scripts/build.sh` | Builds and tests everything |
 | `VERSION` | Single version for server and both clients |
 
+## Will this pipeline run?
+
+Most pipeline failures can be seen in the YAML before anything runs. Each pipeline shows a
+verdict above its first line, which covers the pipeline and every template it reaches,
+including templates in other repositories:
+
+```
+✗ Will fail when queued: 2 errors, 1 warning      ← click to list the problems
+trigger:
+  branches: …
+```
+
+- **Errors** are what makes Azure reject the run when you click Run.
+  - Template calls: missing or unknown parameters, values not in `values:`, missing templates and unknown aliases.
+  - Aliases a template uses but the pipeline doesn't declare. Azure looks aliases up in the *pipeline's* `resources`.
+  - Names: `dependsOn` naming a stage or job that doesn't exist, invalid or duplicate stage and job names.
+  - Steps templates used under `jobs:`, defaults that aren't in `values:`, and tabs in indentation.
+- **Warnings** are what goes wrong once the run is under way.
+  - Output variables read from a step that doesn't exist, or set without `isOutput=true`. They are always empty.
+  - Runtime parameters without a default in a pipeline that a trigger or a schedule starts.
+  - `${{ parameters.x }}` that evaluates to an empty string.
+
+The same verdict is available in a terminal or a PR check: `atn check path/to/pipeline.yml`.
+These checks read the YAML only. They can't know about things that live in Azure DevOps: service
+connections, variable groups, environments, agent pools, permissions, or what your scripts do.
+
 ## Templates from other repositories
 
 ```yaml
@@ -96,6 +122,7 @@ Each feature is computed once by `atn` and shown through the IDE's own UI.
 | Stages / jobs / steps / template calls | Structure view (Cmd/Ctrl+F12) | Outline view, breadcrumbs |
 | Jump to the referenced template | Ctrl/Cmd+click, or the gutter icon on `template:` | Ctrl/Cmd+click |
 | Problems and fixes | Inspections + Alt+Enter; Diagnostics tab | Problems view + quick fixes |
+| Will this pipeline run? | Verdict Code Vision above a pipeline; *Check Pipeline Before Running* (editor menu) | Verdict code lens above a pipeline; *Check Pipeline Before Running* (palette) |
 | Template graph | Graph tab (IntelliJ toolbar and menus) | Graph panel |
 | Graph filters: problems, kinds, repositories, callers/callees | *Only Problems*, *Filter* popup and direction combo in the Graph tab toolbar | Filter bar under the graph toolbar; direction next to *Depth* |
 | Problems by type, most used / mis-called / unused templates, per-repository counts | Stats tab | Stats view |
@@ -158,13 +185,23 @@ Click a row to open the file. *Show in Graph* centres the graph on that file, fi
 The same binary validates pipelines in a terminal or in CI:
 
 ```bash
-atn check [--root DIR] [--format text|json|azure] [--strict] [--no-fetch] [--config FILE]
+atn check [--root DIR] [--format text|json|azure] [--strict] [--no-fetch] [--config FILE] [files…]
 atn fetch [--root DIR]          # download every referenced repository
 atn repos [--root DIR]          # show how each alias resolves
 atn version
 ```
 
-`check` exits with code 1 on errors, or on warnings too with `--strict`. To get annotations in an Azure Pipelines run, add these steps:
+`check` exits with code 1 on errors, or on warnings too with `--strict`. In text format it ends with one verdict per pipeline:
+
+```
+Pipelines:
+  azure-pipelines.yml          ✗ Will fail when queued: 1 error
+  pipelines/nightly.yml        ✓ No problems found before running
+```
+
+A pipeline passed as a file is checked together with every template it uses, wherever they live (`atn check azure-pipelines.yml`).
+
+To get annotations in an Azure Pipelines run, add these steps:
 
 ```yaml
 - script: |

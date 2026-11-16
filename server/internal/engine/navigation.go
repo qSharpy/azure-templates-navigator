@@ -284,6 +284,9 @@ type Lens struct {
 	Col   int    `json:"col"`
 	Title string `json:"title"`
 	Count int    `json:"count"`
+	// Kind: "usages" (a template's call sites) or "pipeline" (a root
+	// pipeline's verdict; Count is its number of errors and warnings).
+	Kind string `json:"kind"`
 }
 
 // CodeLenses returns "N usages" above a template's parameters block (or its
@@ -299,24 +302,36 @@ func (e *Engine) CodeLenses(path string) []Lens {
 	}
 	sites := e.callSitesOf(path)
 	if f.isPipeline && len(sites) == 0 {
-		return nil
+		if !e.settings.Diagnostics.Enabled {
+			return nil
+		}
+		line := firstContentLine(f.lines)
+		if line < 0 {
+			return nil
+		}
+		rep := e.pipelineReport(path)
+		return []Lens{{Line: line, Title: rep.Title(), Count: rep.Errors + rep.Warnings, Kind: "pipeline"}}
 	}
 	if !f.isPipeline && len(sites) == 0 && len(f.params) == 0 && len(f.refs) == 0 {
 		return nil // not recognisably a template
 	}
 	line := pipeline.FindTopLevelParameters(f.lines)
 	if line < 0 {
-		for i, l := range f.lines {
-			if !pipeline.IsBlank(l) && !pipeline.IsComment(l) {
-				line = i
-				break
-			}
-		}
+		line = firstContentLine(f.lines)
 	}
 	if line < 0 {
 		return nil
 	}
-	return []Lens{{Line: line, Title: usageTitle(sites, e), Count: len(sites)}}
+	return []Lens{{Line: line, Title: usageTitle(sites, e), Count: len(sites), Kind: "usages"}}
+}
+
+func firstContentLine(lines []string) int {
+	for i, l := range lines {
+		if !pipeline.IsBlank(l) && !pipeline.IsComment(l) {
+			return i
+		}
+	}
+	return -1
 }
 
 func usageTitle(sites []callSite, e *Engine) string {

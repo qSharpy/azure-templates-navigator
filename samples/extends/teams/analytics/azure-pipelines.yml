@@ -1,0 +1,49 @@
+# ============================================================
+# Team Analytics — every template call is correct, but the run would
+# still fail. Found before running (expected diagnostics are listed in
+# ../../README.md):
+#   - 'Publish' depends on 'Tset' (typo for 'Test'): Azure rejects the run
+#     when it is queued
+#   - the Report job reads outputs['metrics.rowCount'], but the metrics step
+#     sets rowCount without isOutput=true: the value is always empty, so
+#     the job fails half-way through the run
+# ============================================================
+trigger:
+  branches:
+    include: [main]
+
+resources:
+  repositories:
+    - repository: platform
+      type: git
+      name: Platform/platform-templates
+      ref: refs/tags/v3.2.0
+    - repository: security
+      type: git
+      name: Security/security-templates
+      ref: refs/heads/main
+
+extends:
+  template: pipelines/secure-base.yml@platform
+  parameters:
+    stages:
+      - stage: Test
+        jobs:
+          - job: Measure
+            steps:
+              - bash: |
+                  rows=$(wc -l < data/events.csv)
+                  echo "##vso[task.setvariable variable=rowCount]$rows"
+                name: metrics
+          - job: Report
+            dependsOn: Measure
+            variables:
+              rows: $[ dependencies.Measure.outputs['metrics.rowCount'] ]
+            steps:
+              - script: test "$(rows)" -gt 0 && echo "rows=$(rows)"
+      - stage: Publish
+        dependsOn: Tset
+        jobs:
+          - job: Publish
+            steps:
+              - script: ./tools/publish-report.sh

@@ -283,3 +283,65 @@ func TestTemplateCompletionSnippetSupport(t *testing.T) {
 		}
 	}
 }
+
+func TestPipelineVerdictLensAndRequest(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, ".git"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "t.yml"), []byte("parameters:\n  - name: émoji\nsteps:\n  - script: echo ${{ parameters.émoji }}\n"), 0o644)
+	pipe := "trigger: none\nsteps:\n  - template: t.yml\n"
+	pipePath := filepath.Join(root, "p.yml")
+	_ = os.WriteFile(pipePath, []byte(pipe), 0o644)
+
+	cl := startServer(t)
+	cl.call("initialize", map[string]interface{}{
+		"rootUri": pathToURI(root),
+		"capabilities": map[string]interface{}{"workspace": map[string]interface{}{
+			"codeLens": map[string]interface{}{"refreshSupport": true},
+		}},
+		"initializationOptions": map[string]interface{}{
+			"settings": map[string]interface{}{"repositories": map[string]interface{}{"autoFetch": false}},
+			"client":   map[string]interface{}{"commandPrefix": "x."},
+		},
+	}, nil)
+	_ = cl.c.notify("initialized", map[string]interface{}{})
+	cl.waitNote("workspace/codeLens/refresh", nil)
+
+	uri := pathToURI(pipePath)
+	var lenses []struct {
+		Command struct {
+			Title     string
+			Command   string
+			Arguments []map[string]string
+		}
+	}
+	cl.call("textDocument/codeLens", map[string]interface{}{"textDocument": map[string]string{"uri": uri}}, &lenses)
+	if len(lenses) != 1 || lenses[0].Command.Command != "x.showPipelineProblems" || lenses[0].Command.Arguments[0]["uri"] != uri ||
+		lenses[0].Command.Title != "✗ Will fail when queued: 1 error" {
+		t.Fatalf("lenses %+v", lenses)
+	}
+
+	var rep struct {
+		Title    string
+		Errors   int
+		Problems []struct {
+			URI   string
+			Range lspRange
+			Code  string
+		}
+	}
+	cl.call("atn/pipelineCheck", map[string]string{"uri": uri}, &rep)
+	if rep.Errors != 1 || len(rep.Problems) != 1 || rep.Problems[0].Code != "missing-required-param" || rep.Problems[0].URI != uri ||
+		rep.Problems[0].Range.Start.Line != 2 {
+		t.Fatalf("report %+v", rep)
+	}
+	var all []struct{ URI string }
+	cl.call("atn/pipelineCheck", map[string]string{}, &all)
+	if len(all) != 1 || all[0].URI != uri {
+		t.Fatalf("all %+v", all)
+	}
+	var none interface{}
+	cl.call("atn/pipelineCheck", map[string]string{"uri": pathToURI(filepath.Join(root, "t.yml"))}, &none)
+	if none != nil {
+		t.Fatalf("template got a report: %v", none)
+	}
+}

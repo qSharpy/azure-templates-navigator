@@ -5,9 +5,33 @@ For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vsco
 
 ## [Unreleased]
 
+### Added
+
+- **"Will this pipeline run?" before you run it.** Every pipeline gets a verdict above its first line, for example `✗ Will fail when queued: 2 errors` or `✓ No problems found before running`.
+  - It covers the pipeline and every template it uses, including templates in other repositories.
+  - Click it (or run **Check Pipeline Before Running** from the command palette or the editor menu) to list the problems and jump to one.
+  - `atn check` prints the same verdicts for every pipeline. `atn check path/to/pipeline.yml` checks that pipeline together with all of its templates.
+- **New checks for what Azure rejects when a run is queued** (errors):
+  - `repository-not-declared`: a template, at any depth, uses `x.yml@alias` or `checkout: alias`, and the pipeline doesn't declare `alias` in `resources.repositories`. Azure looks aliases up in the pipeline's resources, not the template's. Quick fix: copy the declaration from another pipeline in the workspace.
+  - `unknown-dependency`: `dependsOn` names a stage or job that exists nowhere in the expanded pipeline, with "did you mean".
+  - `invalid-name`: stage and job names may only contain letters, digits and `_`.
+  - `duplicate-name`: the same stage or job name twice in one list.
+  - `template-kind-mismatch`: a steps template used under `jobs:` or `stages:`, and the like.
+  - `default-not-allowed`: a parameter's `default` is not one of its `values`. Quick fix: pick an allowed value.
+  - `tab-indentation`: tabs in YAML indentation.
+- **New checks for what goes wrong during the run** (warnings):
+  - `unknown-output-variable`: `outputs['step.var']` names a step that doesn't exist, so the value is always empty.
+  - `output-variable-not-output`: the step sets the variable without `isOutput=true`, so other jobs always see an empty value.
+  - `runtime-param-no-default`: a runtime parameter without a default, in a pipeline that a CI trigger or a schedule starts. Nobody can fill in the value on those runs.
+
 ### Changed
 
 - **The graph shows which file it is built around.** When the graph is scoped to the current file, a *Graph of `<file>`* badge sits in the top-left corner; click it to centre the graph on that file. The file's node has a solid ring, a soft halo, a *CURRENT FILE* tag and a bold label, and it pulses briefly when the graph is drawn. Before, it only had a thin dashed ring. The legend explains the ring.
+- **`unknown-param` is an error** when the template declares typed parameters (`- name:`). Azure rejects the run with "Unexpected parameter".
+  - It is a warning when the template declares no parameters at all. Before, nothing was reported there.
+  - It is information only for legacy map-form parameter blocks (`name: default`). Those accept parameters they don't declare.
+- **`undeclared-param` takes legacy templates' callers into account.** In a map-form template, a name that a caller passes is no longer reported as undeclared.
+- A pipeline's diagnostics are re-checked when any template it reaches changes, not only the ones it calls directly.
 
 ## [2.4.0] — 2026-11-16
 

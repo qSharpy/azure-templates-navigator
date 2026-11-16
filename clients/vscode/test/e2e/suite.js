@@ -76,7 +76,7 @@ async function run() {
 
   // 6. commands registered
   const all = await vscode.commands.getCommands(true);
-  for (const c of ['searchTemplates', 'searchParameters', 'fetchRepository', 'fetchAllRepositories', 'refresh', 'expandTemplateGraph', 'showUsages', 'reportIssue', 'giveFeedback']) {
+  for (const c of ['searchTemplates', 'searchParameters', 'fetchRepository', 'fetchAllRepositories', 'refresh', 'expandTemplateGraph', 'showUsages', 'reportIssue', 'giveFeedback', 'showPipelineProblems']) {
     assert.ok(all.includes(`azure-templates-navigator.${c}`), c);
   }
   // 6b. Report Issue: a pre-filled GitHub URL with versions and nothing local
@@ -159,6 +159,15 @@ async function run() {
   console.log('graph problems:', `${pg.nodes.length}/${pg.totalNodes} nodes, facet ${pg.facets.problems}`);
   assert.ok(pg.nodes.filter(n => !n.context).every(n => n.broken || n.errors || n.warnings));
   assert.ok(pg.nodes.some(n => n.broken), 'broken references are kept');
+
+  // 9. pipeline verdict lens on a root pipeline
+  const verdict = await waitFor(async () => {
+    const l = await vscode.commands.executeCommand('vscode.executeCodeLensProvider', uri);
+    return l && l.length ? l : null;
+  });
+  console.log('verdict lens:', verdict[0].command.title);
+  assert.ok(verdict[0].command.title.startsWith('✗ Will fail when queued'), 'verdict lens');
+  assert.strictEqual(verdict[0].command.command, 'azure-templates-navigator.showPipelineProblems');
 
   await vscode.commands.executeCommand('workbench.view.extension.azure-templates-navigator');
   await sleep(1500);

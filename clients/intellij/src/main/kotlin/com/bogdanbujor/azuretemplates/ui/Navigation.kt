@@ -111,6 +111,99 @@ object UsagesPopup {
 }
 
 /**
+ * Problems that would make a pipeline fail, in it and in every template it
+ * uses (atn/pipelineCheck), as a chooser popup that jumps to the problem.
+ */
+object PipelineProblemsPopup {
+    fun show(project: Project, path: String, editor: Editor?, at: RelativePoint? = null) {
+        val svc = AtnService.getInstance(project)
+        svc.pipelineCheck(path).thenAccept { data ->
+            val rep = data.obj()
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed) return@invokeLater
+                val problems = rep?.list("problems").orEmpty()
+                when {
+                    rep == null -> notify(project, editor, at, "This file is a template, not a pipeline. Open the pipeline that uses it to check it.")
+                    problems.isEmpty() -> notify(project, editor, at,
+                        "${rep.str("title").substringAfter(' ')} (${rep.int("templates")} template(s) checked)")
+                    else -> {
+                        val popup = JBPopupFactory.getInstance().createPopupChooserBuilder(problems)
+                            .setTitle(rep.str("title"))
+                            .setNamerForFiltering { "${it.str("relativePath")} ${it.str("message")}" }
+                            .setRenderer(ProblemRenderer())
+                            .setItemChosenCallback { open(svc, it) }
+                            .createPopup()
+                        when {
+                            at != null -> popup.show(at)
+                            editor != null -> popup.showInBestPositionFor(editor)
+                            else -> popup.showCenteredInCurrentWindow(project)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun open(svc: AtnService, p: JsonObject) {
+        val path = runCatching { Paths.get(URI(p.str("uri"))).toString() }.getOrNull() ?: return
+        val start = p.obj("range")?.obj("start")
+        svc.openFile(path, start?.int("line") ?: 0, start?.int("character") ?: 0)
+    }
+
+    private fun notify(project: Project, editor: Editor?, at: RelativePoint?, text: String) {
+        if (editor != null && at == null) {
+            HintManager.getInstance().showInformationHint(editor, text)
+            return
+        }
+        val point = at ?: WindowManager.getInstance().getFrame(project)?.let { RelativePoint.getCenterOf(it.rootPane) } ?: return
+        JBPopupFactory.getInstance().createHtmlTextBalloonBuilder(text, MessageType.INFO, null)
+            .setFadeoutTime(4000).createBalloon().show(point, com.intellij.openapi.ui.popup.Balloon.Position.above)
+    }
+
+    private fun JsonObject.obj(key: String): JsonObject? = get(key).obj()
+
+    /** "(x) build.yml:12   Missing required parameter …        teams/search" */
+    private class ProblemRenderer : ColoredListCellRenderer<JsonObject>() {
+        override fun customizeCellRenderer(list: JList<out JsonObject>, value: JsonObject, index: Int, selected: Boolean, hasFocus: Boolean) {
+            val rel = value.str("relativePath")
+            icon = if (value.int("severity") == 1) AllIcons.General.Error else AllIcons.General.Warning
+            val line = (value.obj("range")?.obj("start")?.int("line") ?: 0) + 1
+            append(File(rel).name, SimpleTextAttributes.REGULAR_ATTRIBUTES)
+            append(":$line", SimpleTextAttributes.GRAYED_ATTRIBUTES)
+            append("   ${value.str("message")}", SimpleTextAttributes.REGULAR_ATTRIBUTES)
+            val dir = File(rel).parent
+            if (!dir.isNullOrEmpty()) append("   $dir", SimpleTextAttributes.GRAYED_SMALL_ATTRIBUTES)
+        }
+    }
+}
+
+/**
+ * "Check Pipeline Before Running". Run by Code Vision when the verdict lens
+ * on a pipeline is clicked (lens command `AzureTemplatesNavigator.showPipelineProblems`),
+ * or from the menu for the current file.
+ */
+class ShowPipelineProblemsAction : AtnAction() {
+    override fun update(e: AnActionEvent) {
+        val f = e.getData(CommonDataKeys.VIRTUAL_FILE)
+        e.presentation.isEnabledAndVisible = e.project != null && (e.getData(CommandExecutor.LSP_COMMAND) != null ||
+            (f != null && (f.name.endsWith(".yml", true) || f.name.endsWith(".yaml", true))))
+    }
+
+    override fun actionPerformed(e: AnActionEvent) {
+        val project = e.project ?: return
+        val editor = e.getData(CommonDataKeys.EDITOR)
+        val cmd = e.getData(CommandExecutor.LSP_COMMAND)
+        val path = if (cmd != null) {
+            val arg = runCatching { AtnService.gson.toJsonTree(cmd.getArgumentAt(0)).asJsonObject }.getOrNull() ?: return
+            runCatching { Paths.get(URI(arg.str("uri"))).toString() }.getOrNull() ?: return
+        } else {
+            e.getData(CommonDataKeys.VIRTUAL_FILE)?.path ?: return
+        }
+        PipelineProblemsPopup.show(project, path, editor, (e.inputEvent as? MouseEvent)?.let { RelativePoint(it) })
+    }
+}
+
+/**
  * "Show Template Usages". Run by Code Vision when the "N usages" lens above a
  * template is clicked (LSP4IJ dispatches the lens command
  * `AzureTemplatesNavigator.showUsages` to this action), or from the menu for

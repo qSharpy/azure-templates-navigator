@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/qSharpy/azure-templates-navigator/server/internal/pipeline"
@@ -93,6 +94,23 @@ func (e *Engine) CodeActions(path string, startLine, endLine int) []CodeAction {
 				declaredOnce[d.param] = true
 				out = append(out, CodeAction{Title: fmt.Sprintf("Declare parameter '%s'", d.param), Diagnostic: dp,
 					Preferred: len(d.suggestions) == 0, Edits: []TextEdit{declareParamEdit(f, d.param)}})
+			}
+		case CodeDefaultNotValue:
+			for i, v := range d.values {
+				if i >= 15 {
+					break
+				}
+				out = append(out, CodeAction{Title: fmt.Sprintf("Change default to '%s'", v), Diagnostic: dp, Preferred: i == 0,
+					Edits: []TextEdit{{StartLine: d.Line, StartCol: d.StartCol, EndLine: d.Line, EndCol: d.EndCol, NewText: yamlScalar(v)}}})
+			}
+		case CodeRepoNotDeclared:
+			if declaredOnce["@"+d.alias] {
+				break
+			}
+			if decl, ok := e.aliases[d.alias]; ok {
+				declaredOnce["@"+d.alias] = true
+				out = append(out, CodeAction{Title: fmt.Sprintf("Declare repository '%s' in resources.repositories", d.alias), Diagnostic: dp,
+					Preferred: true, Edits: []TextEdit{declareRepoEdit(f.lines, decl)}})
 			}
 		case CodeRepoUnavailable, CodeRepoFetching:
 			title := fmt.Sprintf("Fetch repository '@%s'", d.alias)
@@ -195,6 +213,83 @@ func declareParamEdit(f *fileInfo, name string) TextEdit {
 	eol := len(f.lines[end])
 	return TextEdit{StartLine: end, StartCol: eol, EndLine: end, EndCol: eol, NewText: text}
 }
+
+var (
+	resourcesKeyRe    = regexp.MustCompile(`^resources\s*:\s*$`)
+	repositoriesKeyRe = regexp.MustCompile(`^(\s+)repositories\s*:\s*$`)
+)
+
+// declareRepoEdit adds a `- repository:` entry for decl to a pipeline's
+// resources.repositories, creating `resources:` / `repositories:` as needed.
+func declareRepoEdit(lines []string, decl pipeline.RepoDecl) TextEdit {
+	item := func(ind int) string {
+		pad, prop := strings.Repeat(" ", ind), strings.Repeat(" ", ind+2)
+		t := pad + "- repository: " + decl.Alias + "\n" + prop + "type: " + decl.Type + "\n" + prop + "name: " + yamlScalar(decl.Name)
+		if decl.Ref != "" {
+			t += "\n" + prop + "ref: " + yamlScalar(decl.Ref)
+		}
+		if decl.Endpoint != "" {
+			t += "\n" + prop + "endpoint: " + yamlScalar(decl.Endpoint)
+		}
+		return t
+	}
+	insertAfter := func(line int, text string) TextEdit {
+		eol := len(lines[line])
+		return TextEdit{StartLine: line, StartCol: eol, EndLine: line, EndCol: eol, NewText: "\n" + text}
+	}
+	res := -1
+	for i, l := range lines {
+		if resourcesKeyRe.MatchString(pipeline.StripComment(l)) {
+			res = i
+			break
+		}
+	}
+	if res < 0 {
+		text := "resources:\n  repositories:\n" + item(4) + "\n"
+		for i, l := range lines {
+			if m := topKeyRe.FindStringSubmatch(l); m != nil && repoAnchorKeys[m[1]] {
+				return TextEdit{StartLine: i, StartCol: 0, EndLine: i, EndCol: 0, NewText: text}
+			}
+		}
+		last := len(lines) - 1
+		for last > 0 && pipeline.IsBlank(lines[last]) {
+			last--
+		}
+		return insertAfter(last, strings.TrimSuffix(text, "\n"))
+	}
+	end := pipeline.BlockEnd(lines, res)
+	for i := res + 1; i <= end; i++ {
+		m := repositoriesKeyRe.FindStringSubmatch(pipeline.StripComment(lines[i]))
+		if m == nil {
+			continue
+		}
+		base := len(m[1])
+		last, itemInd := i, base+2
+		for j := i + 1; j <= end; j++ {
+			l := lines[j]
+			if pipeline.IsBlank(l) || pipeline.IsComment(l) {
+				continue
+			}
+			ind := pipeline.Indent(l)
+			isItem := strings.HasPrefix(strings.TrimSpace(l), "-")
+			if ind < base || (ind == base && !isItem) {
+				break
+			}
+			if isItem && last == i {
+				itemInd = ind
+			}
+			last = j
+		}
+		return insertAfter(last, item(itemInd))
+	}
+	return insertAfter(res, "  repositories:\n"+item(4))
+}
+
+var (
+	topKeyRe = regexp.MustCompile(`^([A-Za-z_][\w-]*)\s*:`)
+	// resources: goes before the first of these when it has to be created
+	repoAnchorKeys = map[string]bool{"variables": true, "pool": true, "stages": true, "jobs": true, "steps": true, "extends": true}
+)
 
 // deleteLines removes whole lines [from, to] including the line break.
 func deleteLines(lines []string, from, to int) TextEdit {

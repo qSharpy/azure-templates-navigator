@@ -6,9 +6,8 @@
 # resources, so the run fails with:
 #   "Could not find a repository with alias 'security'"
 #
-# NOT DETECTED YET. The navigator resolves '@security' through the other
-# pipelines in the workspace that declare it. This is the kind of
-# "will it run?" check the roadmap is about.
+# Reported on the extends: line as repository-not-declared. The quick fix
+# copies the declaration from another pipeline in the workspace.
 # ============================================================
 trigger:
   branches:

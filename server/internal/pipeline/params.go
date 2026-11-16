@@ -16,6 +16,10 @@ type Param struct {
 	Values      []string `json:"values,omitempty"` // allowed values, when declared
 	Line        int      `json:"line"`             // 0-based line of the `- name:` entry
 	NameCol     int      `json:"nameCol"`          // byte column of the name on that line
+
+	// Where an inline `default:` value is written (DefaultLine is 0 and the
+	// columns are equal when the default is a block or absent).
+	DefaultLine, DefaultCol, DefaultEnd int `json:"-"`
 }
 
 var (
@@ -118,6 +122,10 @@ func ParseParameters(lines []string) []Param {
 				p.Default = val
 				if val == "" || val == "|" || val == ">" || strings.HasPrefix(val, "|") || strings.HasPrefix(val, ">") {
 					p.Default = summariseBlock(lines, j, end)
+				} else {
+					// val is the trimmed tail of the (comment-stripped) line
+					c := len(StripComment(sub)) - len(val)
+					p.DefaultLine, p.DefaultCol, p.DefaultEnd = j, c, c+len(val)
 				}
 			case "displayName":
 				p.DisplayName = Unquote(val)

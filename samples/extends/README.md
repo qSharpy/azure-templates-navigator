@@ -19,8 +19,9 @@ extends/
     ├── payments/azure-pipelines.yml   happy path through the golden path
     ├── search/azure-pipelines.yml     extends the base directly, several mistakes
     ├── mobile/release.yml             runtime parameters, ${{ if }}, parameters before template
+    ├── analytics/azure-pipelines.yml  correct template calls, but a dependsOn typo and an output variable without isOutput
     └── data/
-        ├── azure-pipelines.yml        missing @security: fails at queue time (not detected yet)
+        ├── azure-pipelines.yml        missing @security: fails at queue time
         └── nightly.yml                '@platfrom' typo
 ```
 
@@ -34,6 +35,9 @@ Both repositories resolve locally through `samples/.azure-templates-navigator.js
 | File | Line | Code |
 |---|---|---|
 | `platform-templates/pipelines/secure-base.yml` | 36 | `unused-param` (`legacyAgentPool`) |
+| `teams/analytics/azure-pipelines.yml` | 41 | `output-variable-not-output` (`metrics.rowCount`) |
+| `teams/analytics/azure-pipelines.yml` | 45 | `unknown-dependency` (`Tset`, did you mean `Test`) |
+| `teams/data/azure-pipelines.yml` | 25 | `repository-not-declared` (`@security`, used by `secure-base.yml`) |
 | `teams/data/nightly.yml` | 24 | `unknown-repository-alias` (`@platfrom`) |
 | `teams/search/azure-pipelines.yml` | 43 | `type-mismatch` (`breakGlass: 'yes'`) |
 | `teams/search/azure-pipelines.yml` | 45 | `missing-required-param` (`projects`) |
@@ -41,13 +45,12 @@ Both repositories resolve locally through `samples/.azure-templates-navigator.js
 | `teams/search/azure-pipelines.yml` | 51 | `value-not-allowed` (`staging`) |
 | `teams/search/azure-pipelines.yml` | 54 | `unknown-param` (`dependson`, did you mean `dependsOn`) |
 
+In the `Pipelines:` verdicts printed after the list, `analytics`, both `data` pipelines and
+`search` should be ✗. `payments`, `mobile` and `platform-templates/tests/secure-base-smoke.yml`
+should be ✓.
+
 ## Known gaps
 
-These would fail in Azure DevOps but are not reported yet:
-
-- **`teams/data/azure-pipelines.yml`**: `secure-base.yml` uses `@security`, which the root
-  pipeline never declares. Azure resolves every alias in the expanded pipeline against the
-  root pipeline's `resources`, so the run fails at queue time.
-- **`teams/search/azure-pipelines.yml`**: the `Reindex` stage `dependsOn: Deploy_staging`. That
-  stage exists only because `staging` was passed, and `staging` is already rejected. Checking
-  that `dependsOn` names a real stage or job needs the pipeline to be expanded first.
+- **`teams/search/azure-pipelines.yml`**: the `Reindex` stage `dependsOn: Deploy_staging`, which
+  is not reported. The stage is named `Deploy_${{ parameters.environment }}`, and a name built
+  from parameters matches any value. `staging` itself is already rejected by `value-not-allowed`.

@@ -22,7 +22,8 @@ const usage = `atn — Azure Templates Navigator %s
 
 Usage:
   atn lsp                      Run the language server on stdio (used by IDE plugins)
-  atn check [flags] [files…]   Validate template call sites; exit code 1 on errors
+  atn check [flags] [files…]   Find what would make a pipeline fail before you run it; exit code 1 on errors.
+                               A pipeline given as a file is checked with every template it uses.
   atn fetch [flags]            Download every repository referenced by resources.repositories
   atn repos [flags]            List referenced repositories and where they resolve
   atn version                  Print the version
@@ -193,9 +194,21 @@ func runCheck(args []string) int {
 
 	all := e.DiagnoseAll()
 	only := map[string]bool{}
+	reports := e.PipelineChecks()
 	for _, a := range fs.Args() {
-		if p, err := filepath.Abs(a); err == nil {
-			only[p] = true
+		p, err := filepath.Abs(a)
+		if err != nil {
+			continue
+		}
+		only[p] = true
+		// a pipeline brings its templates, wherever they live
+		if rep, ok := e.PipelineCheck(p); ok {
+			for _, f := range rep.Files {
+				only[f] = true
+				if _, ok := all[f]; !ok {
+					all[f] = e.Diagnose(f)
+				}
+			}
 		}
 	}
 	root, _ := filepath.Abs(c.root)
@@ -257,9 +270,41 @@ func runCheck(args []string) int {
 		fmt.Println(string(b))
 	case "text":
 		fmt.Fprintf(os.Stderr, "\n%d file(s) checked: %d error(s), %d warning(s)\n", len(paths), errorsN, warningsN)
+		printVerdicts(reports, only, root)
 	}
 	if errorsN > 0 {
 		return 1
 	}
 	return 0
+}
+
+// printVerdicts lists every root pipeline (or the ones asked for) with a
+// one-line answer to "will it run?".
+func printVerdicts(reports []engine.PipelineReport, only map[string]bool, root string) {
+	var shown []engine.PipelineReport
+	width := 0
+	for _, r := range reports {
+		if len(only) > 0 && !only[r.Path] {
+			continue
+		}
+		shown = append(shown, r)
+		if n := len(relTo(root, r.Path)); n > width {
+			width = n
+		}
+	}
+	if len(shown) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "\nPipelines:\n")
+	for _, r := range shown {
+		fmt.Fprintf(os.Stderr, "  %-*s  %s\n", width, relTo(root, r.Path), r.Title())
+	}
+}
+
+func relTo(root, p string) string {
+	rel, err := filepath.Rel(root, p)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return filepath.ToSlash(p)
+	}
+	return filepath.ToSlash(rel)
 }

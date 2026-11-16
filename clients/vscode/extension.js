@@ -214,6 +214,33 @@ async function activate(context) {
       })), { placeHolder: 'Search template parameters…', matchOnDescription: true, matchOnDetail: true });
       if (pick) await openFile(res.filePath, { line: pick.line });
     },
+    // Code lens on a pipeline ("✗ Will fail when queued: …") or the palette:
+    // every problem in the pipeline and the templates it uses.
+    showPipelineProblems: async (a = {}) => {
+      const ed = vscode.window.activeTextEditor;
+      const uri = a.uri || (ed && ed.document.uri.toString());
+      if (!uri) return;
+      const rep = await request('atn/pipelineCheck', { uri });
+      if (!rep) {
+        vscode.window.showInformationMessage('This file is a template, not a pipeline. Open the pipeline that uses it to check it.');
+        return;
+      }
+      if (!rep.problems.length) {
+        vscode.window.showInformationMessage(`${rep.relativePath}: ${rep.title.replace(/^\S+ /, '')} (${rep.templates} template(s) checked).`);
+        return;
+      }
+      const pick = await vscode.window.showQuickPick(rep.problems.map(p => ({
+        label: `$(${p.severity === 1 ? 'error' : 'warning'}) ${p.relativePath}:${p.range.start.line + 1}`,
+        description: p.code,
+        detail: p.message,
+        problem: p,
+      })), { placeHolder: `${rep.relativePath} — ${rep.title}`, matchOnDescription: true, matchOnDetail: true });
+      if (!pick) return;
+      const r = pick.problem.range;
+      await vscode.window.showTextDocument(vscode.Uri.parse(pick.problem.uri), {
+        selection: new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character),
+      });
+    },
     // Code lens "N usages" above a template: peek its call sites.
     showUsages: async (a = {}) => {
       if (!a.uri) return;

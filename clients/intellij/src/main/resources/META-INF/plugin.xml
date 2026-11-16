@@ -118,6 +118,12 @@
             <action id="AzureTemplatesNavigator.showUsages" class="com.bogdanbujor.azuretemplates.ui.ShowUsagesAction"
                     text="Show Template Usages" icon="AllIcons.Actions.Find"
                     description="Pipelines and templates that use the template or parameter at the caret"/>
+            <!-- Also the target of the verdict lens on a pipeline ("✗ Will fail when queued: …"). -->
+            <action id="AzureTemplatesNavigator.showPipelineProblems" class="com.bogdanbujor.azuretemplates.ui.ShowPipelineProblemsAction"
+                    text="Check Pipeline Before Running" icon="AllIcons.Actions.Execute"
+                    description="Everything that would make this pipeline fail, in it and in the templates it uses">
+                <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            </action>
             <action id="AzureTemplatesNavigator.FetchAll" class="com.bogdanbujor.azuretemplates.ui.FetchAllRepositoriesAction"
                     text="Update Downloaded Repositories" icon="AllIcons.Actions.Download"/>
             <action id="AzureTemplatesNavigator.OpenCache" class="com.bogdanbujor.azuretemplates.ui.OpenCacheFolderAction"

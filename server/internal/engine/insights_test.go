@@ -220,7 +220,8 @@ func TestStats(t *testing.T) {
 	if r := labels["Template not found"]; r.Kind != "error" || len(r.Children) == 0 {
 		t.Errorf("template not found: %+v", r)
 	}
-	if r := labels["Unknown parameter"]; r.Kind != "warning" || r.Children[0].Label != "azure-pipelines.yml" || r.Children[0].Line == 0 {
+	// build.yml declares typed parameters, so an unknown one is an error (Azure rejects the run)
+	if r := labels["Unknown parameter"]; r.Kind != "error" || r.Children[0].Label != "azure-pipelines.yml" || r.Children[0].Line == 0 {
 		t.Errorf("unknown parameter: %+v", r)
 	}
 }

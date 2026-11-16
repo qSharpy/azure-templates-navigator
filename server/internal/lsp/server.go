@@ -30,6 +30,9 @@ type Server struct {
 	shutdown bool
 	watchReg bool
 	snippets bool // client accepts snippet completions
+	// lensRefresh: the client accepts workspace/codeLens/refresh, so a
+	// pipeline's verdict lens updates when one of its templates changes.
+	lensRefresh bool
 
 	// pubMu serialises publish runs so an older run can never overwrite the
 	// diagnostics of a newer one.
@@ -290,6 +293,12 @@ func (s *Server) handle(m *message) {
 		result = s.eng.BuildGraph(req)
 	case "atn/workspaceDiagnostics":
 		result = s.workspaceDiagnostics()
+	case "atn/pipelineCheck":
+		var p struct {
+			URI string `json:"uri"`
+		}
+		_ = json.Unmarshal(m.Params, &p)
+		result = s.pipelineCheck(uriToPath(p.URI))
 	case "atn/templates":
 		result = s.eng.ListTemplates()
 	case "atn/parameters":
@@ -350,6 +359,9 @@ type initParams struct {
 			DidChangeWatchedFiles struct {
 				DynamicRegistration bool `json:"dynamicRegistration"`
 			} `json:"didChangeWatchedFiles"`
+			CodeLens struct {
+				RefreshSupport bool `json:"refreshSupport"`
+			} `json:"codeLens"`
 		} `json:"workspace"`
 		TextDocument struct {
 			Completion struct {
@@ -383,6 +395,7 @@ func (s *Server) initialize(raw json.RawMessage) (interface{}, *rpcError) {
 	s.cf = p.InitializationOptions.Client
 	s.watchReg = p.Capabilities.Workspace.DidChangeWatchedFiles.DynamicRegistration
 	s.snippets = p.Capabilities.TextDocument.Completion.CompletionItem.SnippetSupport
+	s.lensRefresh = p.Capabilities.Workspace.CodeLens.RefreshSupport
 	s.eng = engine.New(roots, engine.ParseSettings(p.InitializationOptions.Settings))
 	s.eng.Log = func(msg string) { s.logf("%s", msg) }
 	s.eng.Repos.OnChange(func() {
@@ -417,8 +430,7 @@ func (s *Server) initialize(raw json.RawMessage) (interface{}, *rpcError) {
 
 func (s *Server) initialized() {
 	if s.watchReg {
-		s.reqID++
-		_ = s.c.request(s.reqID, "client/registerCapability", map[string]interface{}{
+		s.clientRequest("client/registerCapability", map[string]interface{}{
 			"registrations": []interface{}{map[string]interface{}{
 				"id": "atn-watch", "method": "workspace/didChangeWatchedFiles",
 				"registerOptions": map[string]interface{}{"watchers": []interface{}{
@@ -560,7 +572,20 @@ func (s *Server) publish() {
 	if changed || delta.Version != s.pubVersion {
 		s.pubVersion = delta.Version
 		_ = s.c.notify("atn/didChange", map[string]interface{}{"reason": "index"})
+		if s.lensRefresh {
+			// pipeline verdicts depend on templates in other files
+			s.clientRequest("workspace/codeLens/refresh", nil)
+		}
 	}
+}
+
+// clientRequest sends a request to the client. Its response is ignored.
+func (s *Server) clientRequest(method string, params interface{}) {
+	s.mu.Lock()
+	s.reqID++
+	id := s.reqID
+	s.mu.Unlock()
+	_ = s.c.request(id, method, params)
 }
 
 func (s *Server) workspaceDiagnostics() interface{} {

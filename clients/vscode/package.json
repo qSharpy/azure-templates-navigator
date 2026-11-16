@@ -164,6 +164,12 @@
         "category": "Azure Templates"
       },
       {
+        "command": "azure-templates-navigator.showPipelineProblems",
+        "title": "Check Pipeline Before Running",
+        "category": "Azure Templates",
+        "icon": "$(pass)"
+      },
+      {
         "command": "azure-templates-navigator.searchTemplates",
         "title": "Search Templates…",
         "category": "Azure Templates",

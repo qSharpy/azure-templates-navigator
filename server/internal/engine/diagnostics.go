@@ -140,7 +140,12 @@ func (e *Engine) computeDiagnostics(path string) []Diagnostic {
 	if e.settings.Diagnostics.UnusedParameters && len(f.params) > 0 {
 		out = append(out, checkUnused(f)...)
 	}
-	out = append(out, checkUndeclared(f)...)
+	out = append(out, checkUndeclared(f, e.legacyPassed(f))...)
+	out = append(out, e.checkStructure(f)...)
+	if e.isRootPipeline(path) {
+		out = append(out, checkRuntimeParams(f)...)
+		out = append(out, e.checkPipeline(f)...)
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Line != out[j].Line {
 			return out[i].Line < out[j].Line
@@ -191,15 +196,34 @@ func (e *Engine) checkCallSite(f *fileInfo, r pipeline.TemplateRef) []Diagnostic
 	}
 
 	tf := e.file(res.Path)
-	if tf == nil || len(tf.params) == 0 {
-		return nil
-	}
-	cs := pipeline.ParseCallSite(f.lines, r.Line)
-	if cs.Unknowable() {
+	if tf == nil {
 		return nil
 	}
 	var out []Diagnostic
+	if d, ok := checkTemplateKind(f, r, tf); ok {
+		out = append(out, d)
+	}
 	tref := strings.TrimSpace(r.Ref)
+	if len(tf.params) == 0 && pipeline.FindTopLevelParameters(tf.lines) >= 0 {
+		return out // a parameters block we could not parse: don't guess
+	}
+	cs := pipeline.ParseCallSite(f.lines, r.Line)
+	if cs.Unknowable() {
+		return out
+	}
+	if len(tf.params) == 0 {
+		for _, name := range cs.Order {
+			pp := cs.Passed[name]
+			out = append(out, Diagnostic{Line: pp.Line, StartCol: pp.NameCol, EndLine: pp.Line, EndCol: pp.NameCol + len(name),
+				Severity: SevWarning, Code: CodeUnknownParam, templateLine: r.Line, param: name,
+				Message: fmt.Sprintf("Unknown parameter '%s' — template '%s' declares no parameters, so nothing uses it", name, tref)})
+		}
+		return out
+	}
+	// Typed (`- name:`) parameters are strict: Azure rejects the run with
+	// "Unexpected parameter". A legacy map-form block (`name: default`)
+	// accepts parameters it doesn't declare, and its body can still read them.
+	legacy := tf.params[0].Type == ""
 
 	for _, p := range tf.params {
 		if !p.Required {
@@ -219,8 +243,12 @@ func (e *Engine) checkCallSite(f *fileInfo, r pipeline.TemplateRef) []Diagnostic
 		decl, ok := pipeline.ParamByName(tf.params, name)
 		if !ok {
 			d := Diagnostic{Line: pp.Line, StartCol: pp.NameCol, EndLine: pp.Line, EndCol: pp.NameCol + len(name),
-				Severity: SevWarning, Code: CodeUnknownParam, templateLine: r.Line, param: name,
-				Message: fmt.Sprintf("Unknown parameter '%s' — not declared in template '%s'", name, tref)}
+				Severity: SevError, Code: CodeUnknownParam, templateLine: r.Line, param: name,
+				Message: fmt.Sprintf("Unknown parameter '%s' — not declared in template '%s', so the run fails when it is queued", name, tref)}
+			if legacy {
+				d.Severity = SevInfo
+				d.Message = fmt.Sprintf("Parameter '%s' is not declared in template '%s'. Its legacy parameters block accepts it, but check the name", name, tref)
+			}
 			d.suggestions = suggest(name, tf.params, cs)
 			if len(d.suggestions) > 0 {
 				d.Message += fmt.Sprintf(". Did you mean '%s'?", d.suggestions[0])
@@ -278,11 +306,14 @@ func checkUnused(f *fileInfo) []Diagnostic {
 // checkUndeclared reports `${{ parameters.x }}` references to parameters the
 // file never declares. Azure evaluates those to an empty string instead of
 // failing, so a typo in a template body silently changes what the pipeline does.
-func checkUndeclared(f *fileInfo) []Diagnostic {
+func checkUndeclared(f *fileInfo, passed map[string]bool) []Diagnostic {
 	if pipeline.FindTopLevelParameters(f.lines) >= 0 && len(f.params) == 0 {
 		return nil // a parameters block we could not parse: don't guess
 	}
 	declared := map[string]bool{}
+	for n := range passed {
+		declared[n] = true
+	}
 	for _, p := range f.params {
 		declared[p.Name] = true
 	}
@@ -303,6 +334,26 @@ func checkUndeclared(f *fileInfo) []Diagnostic {
 			}
 		}
 		out = append(out, d)
+	}
+	return out
+}
+
+// legacyPassed returns, for a template with a legacy map-form parameters
+// block, the names its callers pass. Such a block accepts undeclared
+// parameters, so the body may read them. Caller holds e.mu.
+func (e *Engine) legacyPassed(f *fileInfo) map[string]bool {
+	if len(f.params) == 0 || f.params[0].Type != "" {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, c := range e.callSitesOf(f.path) {
+		cf := e.file(c.path)
+		if cf == nil {
+			continue
+		}
+		for _, n := range pipeline.ParseCallSite(cf.lines, c.ref.Line).Order {
+			out[n] = true
+		}
 	}
 	return out
 }
