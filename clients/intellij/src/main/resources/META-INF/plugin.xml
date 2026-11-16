@@ -13,12 +13,20 @@
             <li><b>Find Usages</b>, <b>Call Hierarchy</b> and a <b>Code Vision</b> "N usages" hint on templates and their parameters — see which pipelines use a template before you change it</li>
             <li><b>Structure view</b> of pipelines: stages, jobs, steps, template calls, <code>${{ if }}</code> blocks and parameters</li>
             <li><b>Dependencies tree</b>, interactive <b>template graph</b>, project-wide <b>diagnostics</b> and <b>repositories</b> views</li>
+            <li><b>Stats</b> for template owners: most used and most mis-called templates, unused templates, per-repository counts</li>
             <li><b>Help and feedback</b> from the bug button in the tool window: report a bug or suggest a feature on GitHub, with your versions filled in</li>
         </ul>
         <p>Powered by the same engine as the VS Code extension and the <code>atn</code> CLI, so behaviour is identical everywhere.</p>
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>2.3.0</h3>
+        <ul>
+            <li>Graph nodes are sized by usage (callers + callees across the project); hover a node for its usages, the pipelines that reach it, and its problems</li>
+            <li>Node and edge counts in the graph corner</li>
+            <li>Graph toolbar: <i>Only Problems</i>, a <i>Filter</i> popup (pipelines, templates, external, broken; repositories) and callers/callees/both around the current file</li>
+            <li>New Stats tab: overview, most used, most mis-called, calls the most templates, not referenced in this project, by repository. <i>Show in Graph</i> centres or filters the graph on a row.</li>
+        </ul>
         <h3>2.2.0</h3>
         <ul>
             <li>Bug button in the Azure Templates tool window: report a bug, documentation, log, suggest a feature, or rate the plugin on JetBrains Marketplace</li>

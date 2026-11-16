@@ -40,13 +40,17 @@ Hover also works on a passed parameter (`  env: prod`), on `${{ parameters.x }}`
 - **Allowed values** and booleans.
 - **Template paths** after `template:`.
 
-### Dependency tree, graph and repositories
+### Dependency tree, graph, stats and repositories
 
 ![Tree](images/10.png)
 ![Graph](images/2.png)
 
 - **Dependencies** shows what the current file calls and who calls it.
 - **Graph** is an interactive view of the current file or the whole workspace.
+  - Nodes are sized by how many files call a template plus how many it calls, across the whole workspace. Hover a node for its usages, the pipelines that reach it, and its problems.
+  - The filter bar shows only problems, some kinds of nodes, or some repositories. Around the current file you can draw callers, callees or both.
+  - The corner shows how many nodes and edges are drawn.
+- **Stats** is for teams that publish templates: most used, most mis-called, calls the most templates, not referenced in this workspace, and per-repository counts. *Show in Graph* centres or filters the graph on a row.
 - **Diagnostics** lists the problems across the workspace.
 - **Repositories** lists every `resources.repositories` entry with its state, commit and age, plus fetch and open actions.
 
