@@ -162,4 +162,24 @@ class RepositoriesTreeProvider extends Base {
   }
 }
 
-module.exports = { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider };
+/** "Help and Feedback": always-visible links to report a bug, suggest a feature, read the docs or open the log. */
+class FeedbackTreeProvider {
+  getChildren() {
+    const ns = 'azure-templates-navigator';
+    return [
+      ['Report a Bug', 'bug', `${ns}.reportIssue`, [{ kind: 'bug' }], 'Opens a new GitHub issue with your versions filled in'],
+      ['Suggest a Feature or Give Feedback', 'lightbulb', `${ns}.reportIssue`, [{ kind: 'feature' }], 'Opens a new GitHub issue'],
+      ['Documentation', 'book', 'vscode.open', [vscode.Uri.parse('https://github.com/qSharpy/azure-templates-navigator#readme')], 'README on GitHub'],
+      ['Show Log', 'output', `${ns}.showOutput`, [], 'Useful to attach to a bug report'],
+    ];
+  }
+  getTreeItem([label, icon, command, args, tooltip]) {
+    const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
+    item.iconPath = new vscode.ThemeIcon(icon);
+    item.tooltip = tooltip;
+    item.command = { command, title: label, arguments: args };
+    return item;
+  }
+}
+
+module.exports = { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider, FeedbackTreeProvider };

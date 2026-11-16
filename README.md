@@ -97,7 +97,7 @@ Each feature is computed once by `atn` and shown through the IDE's own UI.
 | Jump to the referenced template | Ctrl/Cmd+click, or the gutter icon on `template:` | Ctrl/Cmd+click |
 | Problems and fixes | Inspections + Alt+Enter; Diagnostics tab | Problems view + quick fixes |
 | Template graph | Graph tab (IntelliJ toolbar and menus) | Graph panel |
-| Report a bug or an idea | *Help → Report Azure Templates Navigator Issue…*; *Report to Azure Templates Navigator* in the IDE error dialog | *Azure Templates: Report Issue…* (command palette, ⋯ menu of the Templates view); *Help → Report Issue* |
+| Report a bug or an idea | Bug button in the Azure Templates tool window header; *Help → Report Azure Templates Navigator Issue…*; *Report to Azure Templates Navigator* in the IDE error dialog | *Help and Feedback* view in the Azure Templates sidebar; bug button on the Dependencies and Diagnostics views; *Azure Templates: Report Issue…* |
 
 ## Settings (identical in both IDEs)
 
@@ -148,8 +148,9 @@ In CI the checkout already has credentials for Azure Repos via `System.AccessTok
 Bugs, ideas and feedback go to [GitHub Issues](https://github.com/qSharpy/azure-templates-navigator/issues/new/choose).
 The quickest way is from the IDE, which opens a new issue with the extension, `atn`, IDE and OS versions filled in:
 
-- **VS Code:** *Azure Templates: Report Issue…* in the command palette, or the ⋯ menu of the Templates view.
-- **IntelliJ:** *Help → Report Azure Templates Navigator Issue…*. When the plugin throws an exception, IntelliJ's
+- **VS Code:** the *Help and Feedback* view in the Azure Templates sidebar, the bug button on the Dependencies and
+  Diagnostics views, or *Azure Templates: Report Issue…* in the command palette.
+- **IntelliJ:** the bug button in the Azure Templates tool window header, or *Help → Report Azure Templates Navigator Issue…*. When the plugin throws an exception, IntelliJ's
   error dialog offers *Report to Azure Templates Navigator*, which adds the stack trace to the issue.
 
 Nothing is sent until you submit the issue on GitHub, so check it for anything private first. A bug report is

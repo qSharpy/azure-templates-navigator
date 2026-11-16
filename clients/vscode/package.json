@@ -224,7 +224,7 @@
         "command": "azure-templates-navigator.reportIssue",
         "title": "Report Issue…",
         "category": "Azure Templates",
-        "icon": "$(report)"
+        "icon": "$(bug)"
       }
     ],
     "viewsContainers": {
@@ -258,6 +258,11 @@
           "id": "azure-templates-navigator.repositoriesView",
           "name": "Repositories",
           "icon": "$(repo)"
+        },
+        {
+          "id": "azure-templates-navigator.feedbackView",
+          "name": "Help and Feedback",
+          "icon": "$(feedback)"
         }
       ]
     },
@@ -306,8 +311,8 @@
         },
         {
           "command": "azure-templates-navigator.reportIssue",
-          "when": "view == azure-templates-navigator.templateTree",
-          "group": "z_help@9"
+          "when": "view =~ /^azure-templates-navigator\\.(templateTree|diagnosticsPanel)$/",
+          "group": "navigation@8"
         }
       ],
       "view/item/context": [

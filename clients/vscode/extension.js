@@ -13,7 +13,7 @@ const os = require('os');
 const path = require('path');
 const vscode = require('vscode');
 const { LanguageClient, State } = require('vscode-languageclient/node');
-const { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider } = require('./src/views');
+const { DependencyTreeProvider, DiagnosticsTreeProvider, RepositoriesTreeProvider, FeedbackTreeProvider } = require('./src/views');
 const { GraphViewProvider } = require('./src/graphView');
 const { issueUrl } = require('./src/issue');
 
@@ -146,6 +146,7 @@ async function activate(context) {
       : undefined;
   };
   tree.onTitle = title => { treeView.description = title; };
+  context.subscriptions.push(vscode.window.registerTreeDataProvider(`${SECTION}.feedbackView`, new FeedbackTreeProvider()));
   context.subscriptions.push(treeView, diagView, repoView,
     vscode.window.registerWebviewViewProvider(`${SECTION}.graphView`, graph, { webviewOptions: { retainContextWhenHidden: true } }));
 

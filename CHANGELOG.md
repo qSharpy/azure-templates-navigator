@@ -8,8 +8,8 @@ For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vsco
 ### Added
 
 - **Report a bug or an idea from the IDE.** It opens a new GitHub issue with the extension, `atn`, IDE and OS versions filled in. Nothing is sent until you submit it.
-  - VS Code: *Azure Templates: Report Issue…* (command palette, ⋯ menu of the Templates view). The Marketplace page and *Help → Report Issue* link to the issue tracker too.
-  - IntelliJ: *Help → Report Azure Templates Navigator Issue…*. When the plugin throws, IntelliJ's error dialog offers *Report to Azure Templates Navigator*, with the stack trace in the issue.
+  - VS Code: a *Help and Feedback* view in the Azure Templates sidebar, a bug button on the Dependencies and Diagnostics views, and *Azure Templates: Report Issue…*. The Marketplace page and *Help → Report Issue* link to the issue tracker too.
+  - IntelliJ: a bug button in the Azure Templates tool window header, and *Help → Report Azure Templates Navigator Issue…*. When the plugin throws, IntelliJ's error dialog offers *Report to Azure Templates Navigator*, with the stack trace in the issue.
   - GitHub issue forms for bug reports and feature requests.
 
 ## [2.1.0] — 2026-11-03

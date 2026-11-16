@@ -61,6 +61,8 @@ class AtnToolWindowFactory : ToolWindowFactory {
         add("Graph", GraphPanel(project))
         add("Diagnostics", DiagnosticsPanel(project))
         add("Repositories", RepositoriesPanel(project))
+        // A bug button in the tool window header, visible on every tab.
+        toolWindow.setTitleActions(listOfNotNull(ActionManager.getInstance().getAction("AzureTemplatesNavigator.ReportIssue")))
     }
 }
 
