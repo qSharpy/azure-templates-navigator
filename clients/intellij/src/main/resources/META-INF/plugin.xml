@@ -13,11 +13,25 @@
             <li><b>Find Usages</b>, <b>Call Hierarchy</b> and a <b>Code Vision</b> "N usages" hint on templates and their parameters — see which pipelines use a template before you change it</li>
             <li><b>Structure view</b> of pipelines: stages, jobs, steps, template calls, <code>${{ if }}</code> blocks and parameters</li>
             <li><b>Dependencies tree</b>, interactive <b>template graph</b>, project-wide <b>diagnostics</b> and <b>repositories</b> views</li>
+            <li><b>Help and feedback</b> from the bug button in the tool window: report a bug or suggest a feature on GitHub, with your versions filled in</li>
         </ul>
         <p>Powered by the same engine as the VS Code extension and the <code>atn</code> CLI, so behaviour is identical everywhere.</p>
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>2.2.0</h3>
+        <ul>
+            <li>Bug button in the Azure Templates tool window: report a bug, documentation, log, suggest a feature, or rate the plugin on JetBrains Marketplace</li>
+            <li>Bug reports and feature requests open a GitHub issue with the plugin, <code>atn</code>, IDE and OS versions filled in. Nothing is sent until you submit it.</li>
+            <li>When the plugin throws, IntelliJ's error dialog offers <i>Report to Azure Templates Navigator</i>, with the stack trace in the issue</li>
+            <li>Also in <i>Help | Report Azure Templates Navigator Issue…</i></li>
+        </ul>
+        <h3>2.1.0</h3>
+        <ul>
+            <li><code>template:</code> text inside a script block is no longer treated as a template call</li>
+            <li>Flow-mapping parameters (<code>parameters: { env: prod }</code>) and <code>parameters: ${{ parameters }}</code> are understood</li>
+            <li>Edits re-check only what they affect, and YAML that isn't Azure Pipelines is left out of the index</li>
+        </ul>
         <h3>2.0.0</h3>
         <ul>
             <li>New shared engine (also used by the VS Code extension and the <code>atn</code> CLI) — identical behaviour across IDEs</li>

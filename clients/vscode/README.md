@@ -102,6 +102,19 @@ The cache is a shallow, read-only git fetch of the exact `ref`. It uses your exi
 - *Refresh*
 - *Restart Language Server*
 - *Show Output*
+- *Report Issue…*
+- *Give Feedback (Rate and Review)*
+
+## Help and feedback
+
+The **Help and Feedback** view at the bottom of the Azure Templates sidebar has everything in one place:
+
+- **Report a Bug**: opens a new GitHub issue with the extension, `atn`, VS Code and OS versions filled in. Nothing is sent until you submit it.
+- **Documentation** and **Show Log** (worth attaching to a bug report).
+- **Suggest a Feature**: a GitHub issue for ideas and missing checks.
+- **Give Feedback**: rate and review the extension here on the Marketplace. It helps other people find it.
+
+The bug button on the Dependencies and Diagnostics views does the same.
 
 ## Use it in CI
 
