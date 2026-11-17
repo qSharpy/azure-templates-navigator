@@ -70,6 +70,18 @@ interface AtnLanguageServer : LanguageServer {
 
     @JsonRequest("atn/setChangesBase")
     fun setChangesBase(params: JsonObject): CompletableFuture<JsonElement?>
+
+    @JsonRequest("atn/azurePlan")
+    fun azurePlan(params: JsonObject): CompletableFuture<JsonElement?>
+
+    @JsonRequest("atn/azureValidate")
+    fun azureValidate(params: JsonObject): CompletableFuture<JsonElement?>
+
+    @JsonRequest("atn/azureCancel")
+    fun azureCancel(params: JsonObject): CompletableFuture<JsonElement?>
+
+    @JsonRequest("atn/azureExpansion")
+    fun azureExpansion(params: JsonObject): CompletableFuture<JsonElement?>
 }
 
 class AtnServerFactory : LanguageServerFactory {
@@ -103,6 +115,12 @@ class AtnLanguageClient(project: Project) : LanguageClientImpl(project) {
     @JsonNotification("atn/didChange")
     fun didChange(@Suppress("UNUSED_PARAMETER") params: JsonElement?) {
         if (!project.isDisposed) AtnService.getInstance(project).fireChanged()
+    }
+
+    /** Progress of a running check in Azure DevOps (see AzureCheck). */
+    @JsonNotification("atn/azureProgress")
+    fun azureProgress(params: JsonElement?) {
+        if (!project.isDisposed) AtnService.getInstance(project).azureProgress(params)
     }
 
     override fun createSettings(): Any = AtnSettings.getInstance().toServerJson()

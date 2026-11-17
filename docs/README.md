@@ -8,6 +8,7 @@ The screenshots use the repository's [`samples/`](../samples) folder. Open it to
 - [Shortcuts](#shortcuts)
 - [Will this pipeline run?](#will-this-pipeline-run)
 - [What did my changes break?](#what-did-my-changes-break) — only the problems your work added
+- [Check in Azure DevOps](#check-in-azure-devops) — Azure compiles the pipelines your changes reach (opt-in)
 - [A template's parameters](#a-templates-parameters)
 - [Complete a template call in one go](#complete-a-template-call-in-one-go)
 - [Problems and quick fixes](#problems-and-quick-fixes)
@@ -98,6 +99,69 @@ changes added. The verdicts, the Pipelines view and the CLI keep the real severi
 
 Turn it off with `azure-templates-navigator.changes.enabled` (VS Code) or *Show what my changes added and fixed* in the
 settings (IntelliJ). It needs a git repository and the `git` command.
+
+## Check in Azure DevOps
+
+atn's checks run on your machine and can be wrong. Azure DevOps itself can compile a pipeline without running it (the *preview*
+API, the same as the pipeline editor's *Validate*). **Check in Azure DevOps** asks it to, for every pipeline your changes reach,
+twice: at the commit your work started from, and with your changes. It then shows:
+
+- whether each pipeline **compiles** or is **rejected**, and what it was at the base (in the tooltip);
+- the problems Azure reports, at the line it gives, with the ones your changes added marked *new*: *✗ rejected (1 problem, 1
+  new)* means your changes broke it;
+- whether atn agrees: *atn agrees*, *atn found no error here* (please [report it](#tips-help-and-feedback)), or *atn reports
+  errors Azure accepts*;
+- **Expanded YAML changed (+12 −3)**: the whole pipeline as Azure expanded it, at the base and with your changes, in a diff
+  editor. This shows what a template change really does to each pipeline that uses it.
+
+It is off by default, and asks before each check.
+
+**Turn it on** with `azure-templates-navigator.azure.enabled` (VS Code) or *Offer to check my changes in Azure DevOps*
+(IntelliJ settings), or run *Azure Templates: Check in Azure DevOps* from the Command Palette (VS Code) or
+*Check in Azure DevOps* in the Pipelines tab's toolbar (IntelliJ): both offer to turn it on.
+
+**Start a check** in My changes (see [What did my changes break?](#what-did-my-changes-break)): the cloud button in the
+Pipelines view title or the *Check in Azure DevOps* row (VS Code, shown once it is on), or the toolbar action or that row
+(IntelliJ). The results stay under each pipeline until the next check, and say *out of date* once you edit something they
+depend on. The verdict above each pipeline ends with the Azure result too.
+
+**What it sends.** Azure only compiles what is on its server, so your changed YAML files (including unsaved editors) are first
+pushed as one commit on top of the base, to a ref of their own: `refs/atn/preview/<you>/<branch>`. It is not a branch, so it
+doesn't show in the branch list, start CI runs or open pull requests, and it is deleted after the check. The dialog lists the
+organization, your account, each file and ref it pushes, and each pipeline it checks. *Always for this workspace* (VS Code) or
+*Don't ask again* (IntelliJ) skips it next time. No run is queued.
+
+**Signing in.** It uses the Azure CLI: run `az login` once (add `--allow-no-subscriptions` if your account has no Azure
+subscription). It finds your organization's tenant on its own and asks `az` for a token for that tenant, so you don't need a
+personal access token. The token is kept in memory only. A token in `ATN_AZURE_TOKEN` is used instead when it is set (and
+`SYSTEM_ACCESSTOKEN` in a pipeline, which hasn't been tried yet: the build service needs *Contribute* on the repository to push
+the snapshot).
+
+**What can be checked.** A pipeline is checked when it is in an Azure Repos git repository and an Azure DevOps pipeline uses
+that file. A pipeline with no Azure DevOps pipeline, a GitHub repository, or a file with no origin on `dev.azure.com` is listed
+as *not checked*, with the reason. Runtime parameters with no default get the first allowed value, or one of their type.
+
+If a repository refuses the push (a branch policy, or no permission to create refs), the pipelines that need it say *couldn't
+check* with the server's reason, and the others are still checked. No branch is created instead.
+
+A change to a templates repository counts only when that repository is open too (a folder of the VS Code workspace, or a
+module in IntelliJ), or with `atn validate --root app --root templates`. A clone next to the project that is only used to
+resolve `@templates` is read, not pushed.
+
+Azure's compile check covers what makes a run fail when it is queued: YAML, templates and their parameters, `dependsOn`,
+expressions, tasks and environments. It doesn't check agent pools, variable groups, service connections or task inputs, and it
+compiles each pipeline for a manual run, so `${{ if eq(variables['Build.Reason'], 'PullRequest') }}` branches aren't taken.
+
+**What it doesn't do yet:**
+- check every flow of a template (each `${{ if }}` branch, parameter values, the pipelines that don't use it yet): planned
+  next;
+- sign in with VS Code's own Microsoft account (only the Azure CLI or a token);
+- check pipelines in GitHub repositories, or templates that live in GitHub;
+- count changes in a templates repository that isn't open in the workspace;
+- run in Azure Pipelines with `SYSTEM_ACCESSTOKEN`: it should work, but hasn't been tried.
+
+Settings: `azure-templates-navigator.azure.enabled`, `azure.keepSnapshots` (keep the refs after the check, to look at them) and
+`azure.azPath` (VS Code), or *Check in Azure DevOps* in the settings (IntelliJ). In a terminal: [`atn validate`](../README.md#cli).
 
 ## A template's parameters
 
@@ -263,7 +327,8 @@ filled in), *Documentation* (this page) and *Show Log*.
 The `atn` binary behind both IDEs also runs on its own. `atn check` prints every pipeline's verdict and exits with 1 on errors,
 and `--format azure` turns the problems into annotations on an Azure Pipelines run. `atn check --since origin/main` reports
 and fails on only the problems that are new since `origin/main`, so a repository can gate pull requests before its existing
-problems are fixed. See the [CLI section of the main
+problems are fixed. `atn validate` asks Azure DevOps to compile the pipelines your changes reach (see [Check in Azure
+DevOps](#check-in-azure-devops)). See the [CLI section of the main
 README](../README.md#cli).
 
 ---

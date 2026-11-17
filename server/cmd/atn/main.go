@@ -26,10 +26,15 @@ Usage:
                                A pipeline given as a file is checked with every template it uses.
   atn fetch [flags]            Download every repository referenced by resources.repositories
   atn repos [flags]            List referenced repositories and where they resolve
+  atn validate [flags] [pipelines…]
+                               Ask Azure DevOps to compile the pipelines your changes reach, at the
+                               base and with your changes (no run is created). Pushes your changed
+                               YAML to refs/atn/preview/… first. Exit code 1 when your changes make
+                               Azure reject a pipeline, 2 when the check can't be made.
   atn version                  Print the version
 
 Common flags:
-  --root DIR        Workspace root (default: current directory)
+  --root DIR        Workspace root (default: current directory); repeat it for several
   --config FILE     Settings JSON (same shape as the IDE settings)
   --cache-dir DIR   Repository cache (default: ~/.azure-templates-navigator/repos)
 
@@ -41,6 +46,16 @@ check flags:
                     a branch (where HEAD splits from it), a commit, HEAD (uncommitted
                     changes only) or auto (where this branch started). Needs the history
                     back to REF: in Azure Pipelines, checkout with fetchDepth: 0.
+
+validate flags:
+  --since REF       The base to compare with (default auto), as for check
+  --yes             Don't ask before pushing and previewing (required without a terminal)
+  --format FMT      text (default) | json
+  --diff            Print how each expanded pipeline changed (unified diff)
+  --keep-snapshots  Keep the refs/atn/preview/… refs after the check
+  --no-fetch        Don't download missing repositories
+  Signs in with ATN_AZURE_TOKEN or SYSTEM_ACCESSTOKEN when set, else the Azure CLI
+  (az login --allow-no-subscriptions).
 `
 
 func main() {
@@ -67,6 +82,8 @@ func main() {
 		os.Exit(runFetch(args[1:]))
 	case "repos":
 		os.Exit(runRepos(args[1:]))
+	case "validate":
+		os.Exit(runValidate(args[1:]))
 	case "help", "-h", "--help":
 		fmt.Printf(usage, version)
 	default:
@@ -77,10 +94,21 @@ func main() {
 
 type common struct {
 	root, config, cacheDir string
+	roots                  rootList
+}
+
+// rootList is --root, which may be given more than once (a workspace of
+// several repositories, e.g. templates and the pipelines that use them).
+type rootList []string
+
+func (r *rootList) String() string { return strings.Join(*r, ",") }
+func (r *rootList) Set(v string) error {
+	*r = append(*r, v)
+	return nil
 }
 
 func (c *common) register(fs *flag.FlagSet) {
-	fs.StringVar(&c.root, "root", ".", "workspace root")
+	fs.Var(&c.roots, "root", "workspace root (repeatable; default: current directory)")
 	fs.StringVar(&c.config, "config", "", "settings JSON file")
 	fs.StringVar(&c.cacheDir, "cache-dir", "", "repository cache directory")
 }
@@ -99,11 +127,19 @@ func (c *common) engine(autoFetch bool) (*engine.Engine, error) {
 		s.Repositories.CacheDir = c.cacheDir
 	}
 	s.Repositories.AutoFetch = autoFetch
-	root, err := filepath.Abs(c.root)
-	if err != nil {
-		return nil, err
+	if len(c.roots) == 0 {
+		c.roots = rootList{"."}
 	}
-	e := engine.New([]string{root}, s)
+	c.root = c.roots[0]
+	var roots []string
+	for _, r := range c.roots {
+		abs, err := filepath.Abs(r)
+		if err != nil {
+			return nil, err
+		}
+		roots = append(roots, abs)
+	}
+	e := engine.New(roots, s)
 	e.Rescan()
 	return e, nil
 }

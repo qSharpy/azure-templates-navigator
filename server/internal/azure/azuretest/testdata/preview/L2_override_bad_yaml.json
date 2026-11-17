@@ -1,0 +1,7 @@
+{
+ "message": "/azure-pipelines.yml (Line: 21, Col: 5): Unexpected value ':'\n/azure-pipelines.yml (Line: 22, Col: 1):  While parsing a node, did not find expected node content.\nObject reference not set to an instance of an object.",
+ "typeKey": "PipelineValidationException",
+ "typeName": "Microsoft.Azure.Pipelines.WebApi.PipelineValidationException, Microsoft.Azure.Pipelines.WebApi",
+ "errorCode": 0,
+ "eventId": 3000
+}

@@ -1,0 +1,31 @@
+{
+ "count": 2,
+ "value": [
+  {
+   "id": "c1a2b3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+   "name": "atn-templates",
+   "url": "https://dev.azure.com/fabrikam/8d0f6a2b-5c3e-4f71-a9d8-2e6b7c4f1a90/_apis/git/repositories/c1a2b3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+   "defaultBranch": "refs/heads/main",
+   "remoteUrl": "https://fabrikam@dev.azure.com/fabrikam/personal/_git/atn-templates",
+   "sshUrl": "git@ssh.dev.azure.com:v3/fabrikam/personal/atn-templates",
+   "webUrl": "https://dev.azure.com/fabrikam/personal/_git/atn-templates",
+   "project": {
+    "id": "8d0f6a2b-5c3e-4f71-a9d8-2e6b7c4f1a90",
+    "name": "personal"
+   }
+  },
+  {
+   "id": "d2b3c4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+   "name": "atn-consumer",
+   "url": "https://dev.azure.com/fabrikam/8d0f6a2b-5c3e-4f71-a9d8-2e6b7c4f1a90/_apis/git/repositories/d2b3c4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+   "defaultBranch": "refs/heads/main",
+   "remoteUrl": "https://fabrikam@dev.azure.com/fabrikam/personal/_git/atn-consumer",
+   "sshUrl": "git@ssh.dev.azure.com:v3/fabrikam/personal/atn-consumer",
+   "webUrl": "https://dev.azure.com/fabrikam/personal/_git/atn-consumer",
+   "project": {
+    "id": "8d0f6a2b-5c3e-4f71-a9d8-2e6b7c4f1a90",
+    "name": "personal"
+   }
+  }
+ ]
+}

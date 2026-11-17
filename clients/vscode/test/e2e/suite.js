@@ -275,6 +275,33 @@ async function run() {
     await vscode.commands.executeCommand('azure-templates-navigator.showAllPipelines');
   }
 
+  // 12. Check in Azure DevOps: off by default. Turned on, My changes offers
+  //     it, and the plan says why the samples can't be checked (they aren't
+  //     on Azure Repos, so nothing reaches the network).
+  {
+    const off = await api.request('atn/azurePlan', {});
+    assert.ok(off && off.disabled, 'Azure checks are off by default');
+    const config = vscode.workspace.getConfiguration('azure-templates-navigator');
+    await config.update('azure.enabled', true, vscode.ConfigurationTarget.Global);
+    const plan = await waitFor(async () => {
+      const p = await api.request('atn/azurePlan', {});
+      return p && !p.disabled ? p : null;
+    });
+    assert.ok(plan.error, `no plan for the samples: ${JSON.stringify(plan)}`);
+    const changes = await api.request('atn/changes', {});
+    if (changes && changes.available) {
+      await vscode.commands.executeCommand('azure-templates-navigator.showMyChanges');
+      const rows = await waitFor(async () => {
+        const r = await api.pipelines.getChildren();
+        return r && r.some(x => x.azureSummary) ? r : null;
+      });
+      const item = api.pipelines.getTreeItem(rows.find(x => x.azureSummary));
+      assert.strictEqual(item.command.command, 'azure-templates-navigator.checkInAzure');
+      await vscode.commands.executeCommand('azure-templates-navigator.showAllPipelines');
+    }
+    await config.update('azure.enabled', undefined, vscode.ConfigurationTarget.Global);
+  }
+
   await vscode.commands.executeCommand('workbench.view.extension.azure-templates-navigator');
   await sleep(1500);
   console.log('E2E OK');

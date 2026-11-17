@@ -250,7 +250,7 @@ data class Item(
     val expand: Boolean = false,
 )
 
-private const val MY_CHANGES_KEY = "azureTemplatesNavigator.pipelines.onlyMyChanges"
+internal const val MY_CHANGES_KEY = "azureTemplatesNavigator.pipelines.onlyMyChanges"
 
 /** Base class: a tree fed by an async server request, refreshed on change. */
 abstract class ServerTreePanel(protected val project: Project) : SimpleToolWindowPanel(true, true), Disposable {
@@ -556,6 +556,7 @@ class PipelinesPanel(project: Project) : ServerTreePanel(project) {
     init {
         toolbar(
             *myChangesActions(),
+            action("Check in Azure DevOps", AllIcons.Actions.Execute) { AzureCheck.run(project) },
             action("Refresh", AllIcons.Actions.Refresh) { service.execute("atn.refresh"); reload() },
             action("Expand All", AllIcons.Actions.Expandall) { TreeUtil.expandAll(tree) },
             action("Collapse All", AllIcons.Actions.Collapseall) { TreeUtil.collapseAll(tree, 1) },
@@ -630,6 +631,61 @@ class PipelinesPanel(project: Project) : ServerTreePanel(project) {
         }
     }
 
+    private fun ago(iso: String): String {
+        val t = try { java.time.Instant.parse(iso).toEpochMilli() } catch (e: Exception) { return "" }
+        val m = (System.currentTimeMillis() - t) / 60000
+        return if (m < 1) "just now" else if (m < 60) "$m min ago" else "${(m + 30) / 60} h ago"
+    }
+
+    /** A pipeline's last check in Azure DevOps (atn/changes: pipelines[].azure). */
+    private fun azureNode(a: JsonObject): DefaultMutableTreeNode {
+        val agreement = when (a.str("agreement")) {
+            "agree" -> "atn agrees"
+            "azureOnly" -> "atn found no error here: please report it"
+            "atnOnly" -> "atn reports errors Azure accepts"
+            else -> ""
+        }
+        val stale = a.get("stale")?.asBoolean == true
+        val icon = when {
+            a.str("skip").isNotEmpty() -> AllIcons.General.Remove
+            a.str("verdict") == "compiles" -> AllIcons.General.InspectionsOK
+            a.str("verdict") == "rejected" -> AllIcons.General.Error
+            else -> AllIcons.General.QuestionDialog
+        }
+        val def = a.get("definition").obj()
+        val params = a.get("parameters").obj()
+        val tip = listOfNotNull(
+            a.str("title"),
+            def?.let { "Compiled with pipeline #${it.int("id")} ${it.str("name")}" },
+            a.str("before").takeIf { it.isNotEmpty() }?.let { "At the base: $it" },
+            params?.let { o -> "Runtime parameters filled in: " + o.entrySet().joinToString(", ") { "${it.key}=${it.value}" } },
+            a.str("error").takeIf { it.isNotEmpty() },
+        ).joinToString("<br>") { StringUtil.escapeXmlEntities(it) }
+        val title = a.str("title").replace(Regex(" · atn .*$"), "").replace(Regex(" · expansion .*$"), "")
+        val node = DefaultMutableTreeNode(Item("Azure DevOps: $title", (if (stale) "out of date · " else "") + agreement, icon,
+            "<html>$tip</html>", data = a, expand = true))
+        fun asProblem(x: JsonObject, isNew: Boolean) = x.deepCopy().apply {
+            addProperty("severity", 1); addProperty("code", "azure"); addProperty("new", isNew)
+        }
+        val news = a.list("new")
+        news.forEach { node.add(problemNode(asProblem(it, true))) }
+        fun line(x: JsonObject) = x.get("range").obj()?.get("start").obj()?.int("line") ?: 0
+        a.list("problems").filter { p -> news.none { it.str("message") == p.str("message") && it.str("filePath") == p.str("filePath") && line(it) == line(p) } }
+            .forEach { node.add(problemNode(asProblem(it, false))) }
+        val ex = a.get("expansion").obj()
+        if (ex?.get("changed")?.asBoolean == true) {
+            val path = a.str("filePath")
+            node.add(DefaultMutableTreeNode(Item("Expanded YAML changed (+${ex.int("added")} −${ex.int("removed")})", "double-click for the diff",
+                AllIcons.Actions.Diff, "The pipeline as Azure DevOps expanded it, at the base and with your changes",
+                open = { AzureCheck.showDiff(project, path) })))
+        }
+        if (a.str("agreement") == "atnOnly") {
+            node.add(DefaultMutableTreeNode(Item("Azure compiles it, but atn reports errors", icon = AllIcons.General.Information,
+                tooltip = "Azure's compile check passed. atn's errors may still fail the run when it is queued, or atn is wrong: please report it if so.")))
+        }
+        return node
+    }
+
     private fun buildChanges(root: DefaultMutableTreeNode, c: JsonObject?) {
         if (c == null) {
             root.add(DefaultMutableTreeNode(Item("Comparing with where your work started…", "waiting for the language server", AllIcons.Process.Step_1)))
@@ -677,6 +733,27 @@ class PipelinesPanel(project: Project) : ServerTreePanel(project) {
             if (newErrors > 0) AllIcons.General.Error else AllIcons.General.InspectionsOK,
             "<html>What your changes did to the pipelines below<br><br>In total, ${c.int("allFailing")} of ${c.int("allPipelines")} pipelines fail when queued, " +
                 "counting problems that were there before your changes.<br>Double-click to see every pipeline</html>", open = { onlyMyChanges = false; reload() })))
+        // Check in Azure DevOps: the last check, or an offer to run one
+        val az = c.get("azure").obj()
+        if (az != null || c.get("azureEnabled")?.asBoolean == true) {
+            val running = az?.str("state") == "running"
+            val stale = az?.get("stale")?.asBoolean == true
+            val totals = az?.get("totals").obj()
+            val warn = az != null && (az.str("state") == "failed" || stale || (totals?.int("withNewProblems") ?: 0) > 0 || (totals?.int("disagree") ?: 0) > 0)
+            val desc = when {
+                az == null -> "compile these pipelines in Azure DevOps"
+                running -> ""
+                stale -> "out of date · double-click to check again"
+                else -> ago(az.str("finishedAt"))
+            }
+            val error = az?.str("error")?.takeIf { it.isNotEmpty() }?.let { StringUtil.escapeXmlEntities(it) + "<br><br>" } ?: ""
+            root.add(DefaultMutableTreeNode(Item(az?.str("summary") ?: "Check in Azure DevOps", desc,
+                when { running -> AllIcons.Process.Step_1; warn -> AllIcons.General.Warning; else -> AllIcons.Actions.Execute },
+                "<html>${error}Azure DevOps compiles each pipeline below, at the base and with your changes, without running it. Double-click to check again.<br><br>" +
+                    "Azure checks what makes a run fail when it is queued (YAML, templates, parameters, dependsOn, tasks, environments). " +
+                    "It doesn't check pools, variable groups, service connections or task inputs, and PR-only branches (Build.Reason) can't be previewed.</html>",
+                open = { AzureCheck.run(project) })))
+        }
         for (p in c.list("pipelines")) {
             val path = p.str("filePath")
             val now = p.get("now").obj()
@@ -690,6 +767,7 @@ class PipelinesPanel(project: Project) : ServerTreePanel(project) {
             val news = p.list("new")
             val fixed = p.list("fixed")
             val changed = p.get("changed").arr().map { it.asString }
+            p.get("azure").obj()?.let { node.add(azureNode(it)) }
             if (news.isNotEmpty()) node.add(DefaultMutableTreeNode(Item("New (${news.size})", icon = AllIcons.General.Add)).apply { news.forEach { add(problemNode(it)) } })
             if (fixed.isNotEmpty()) node.add(DefaultMutableTreeNode(Item("Fixed (${fixed.size})", icon = AllIcons.General.InspectionsOK)).apply { fixed.forEach { add(problemNode(it, fixed = true)) } })
             if (changed.isNotEmpty()) node.add(DefaultMutableTreeNode(Item("Files you changed that it uses (${changed.size})", icon = AllIcons.Actions.Diff)).apply {

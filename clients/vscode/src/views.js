@@ -268,6 +268,35 @@ function problemItem(p, { fixed = false } = {}) {
   return item;
 }
 
+function ago(iso) {
+  const t = Date.parse(iso);
+  if (!t) return '';
+  const m = Math.round((Date.now() - t) / 60000);
+  return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : `${Math.round(m / 60)} h ago`;
+}
+
+const AGREEMENT = {
+  agree: 'atn agrees',
+  azureOnly: 'atn found no error here: please report it',
+  atnOnly: 'atn reports errors Azure accepts',
+};
+
+// A pipeline's last check in Azure DevOps (atn/changes: pipelines[].azure).
+function azureNode(a) {
+  const children = [];
+  for (const x of a.new) children.push({ problem: { ...x, severity: 1, code: 'azure', new: true } });
+  for (const x of a.problems.filter(p => !a.new.some(n => n.message === p.message && n.filePath === p.filePath && n.range.start.line === p.range.start.line))) {
+    children.push({ problem: { ...x, severity: 1, code: 'azure' } });
+  }
+  if (a.expansion && a.expansion.changed) {
+    children.push({ expansion: true, uri: a.uri, label: `Expanded YAML changed (+${a.expansion.added} −${a.expansion.removed})` });
+  }
+  if (a.agreement === 'atnOnly') {
+    children.push({ message: 'Azure compiles it, but atn reports errors', tooltip: 'Azure\'s compile check passed. atn\'s errors may still fail the run when it is queued, or atn is wrong: please report it if so.' });
+  }
+  return { azure: a, children };
+}
+
 class PipelinesTreeProvider extends Base {
   constructor(request, mode = 'all') {
     super(request);
@@ -325,8 +354,21 @@ class PipelinesTreeProvider extends Base {
       tooltip: `What your changes did to the pipelines below.\n\nIn total, ${c.allFailing} of ${c.allPipelines} pipelines fail when queued, counting problems that were there before your changes. Click to see every pipeline.`,
       description: `${c.allFailing} of ${c.allPipelines} fail in total`,
     });
+    // Check in Azure DevOps: the last check, or an offer to run one
+    if (c.azure || c.azureEnabled) {
+      const a = c.azure;
+      rows.push({
+        azureSummary: true,
+        label: a ? a.summary : 'Check in Azure DevOps',
+        description: a ? (a.state === 'running' ? '' : a.stale ? 'out of date · click to check again' : ago(a.finishedAt)) : 'compile these pipelines in Azure DevOps',
+        warn: a && (a.state === 'failed' || a.stale || (a.totals && (a.totals.withNewProblems || a.totals.disagree))),
+        running: a && a.state === 'running',
+        tooltip: (a && a.error ? `${a.error}\n\n` : '') + 'Azure DevOps compiles each pipeline below, at the base and with your changes, without running it. Click to check again.\n\nAzure checks what makes a run fail when it is queued (YAML, templates, parameters, dependsOn, tasks, environments). It doesn\'t check pools, variable groups, service connections or task inputs, and PR-only branches (Build.Reason) can\'t be previewed.',
+      });
+    }
     for (const p of c.pipelines) {
       const children = [];
+      if (p.azure) children.push(azureNode(p.azure));
       if (p.new.length) children.push({ section: true, label: `New (${p.new.length})`, icon: 'diff-added', expanded: true, children: p.new.map(x => ({ problem: x })) });
       if (p.fixed.length) children.push({ section: true, label: `Fixed (${p.fixed.length})`, icon: 'pass', children: p.fixed.map(x => ({ problem: x, fixed: true })) });
       if (p.changed.length) children.push({ section: true, label: `Files you changed that it uses (${p.changed.length})`, icon: 'git-compare', children: p.changed.map(rel => ({ rel })) });
@@ -359,6 +401,40 @@ class PipelinesTreeProvider extends Base {
       item.iconPath = el.newErrors ? new vscode.ThemeIcon('error', new vscode.ThemeColor('list.errorForeground'))
         : new vscode.ThemeIcon('pass', new vscode.ThemeColor('testing.iconPassed'));
       item.command = { command: 'azure-templates-navigator.showAllPipelines', title: 'Show all pipelines' };
+      return item;
+    }
+    if (el.azureSummary) {
+      const item = new vscode.TreeItem(el.label, None);
+      item.description = el.description;
+      item.tooltip = el.tooltip;
+      item.iconPath = el.running ? new vscode.ThemeIcon('sync~spin')
+        : new vscode.ThemeIcon('azure-devops', el.warn ? new vscode.ThemeColor('list.warningForeground') : undefined);
+      item.command = { command: 'azure-templates-navigator.checkInAzure', title: 'Check in Azure DevOps' };
+      return item;
+    }
+    if (el.azure) {
+      const a = el.azure;
+      const item = new vscode.TreeItem(`Azure DevOps: ${a.title.replace(/ · atn .*$/, '').replace(/ · expansion .*$/, '')}`,
+        el.children.length ? vscode.TreeItemCollapsibleState.Expanded : None);
+      item.description = (a.stale ? 'out of date · ' : '') + (AGREEMENT[a.agreement] || '');
+      const icon = a.skip ? ['circle-slash', 'disabledForeground'] : a.verdict === 'compiles' ? ['pass', 'testing.iconPassed']
+        : a.verdict === 'rejected' ? ['error', 'list.errorForeground'] : ['question', 'list.warningForeground'];
+      item.iconPath = new vscode.ThemeIcon(icon[0], new vscode.ThemeColor(icon[1]));
+      item.tooltip = [
+        a.title,
+        a.definition ? `Compiled with pipeline #${a.definition.id} ${a.definition.name}` : '',
+        a.before ? `At the base: ${a.before}` : '',
+        a.parameters ? `Runtime parameters filled in: ${Object.entries(a.parameters).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')}` : '',
+        a.error || '',
+      ].filter(Boolean).join('\n');
+      return item;
+    }
+    if (el.expansion) {
+      const item = new vscode.TreeItem(el.label, None);
+      item.iconPath = new vscode.ThemeIcon('diff');
+      item.tooltip = 'The pipeline as Azure DevOps expanded it, at the base and with your changes';
+      item.contextValue = 'azureExpansion';
+      item.command = { command: 'azure-templates-navigator.showExpansionDiff', title: 'Show diff', arguments: [{ uri: el.uri }] };
       return item;
     }
     if (el.section) {

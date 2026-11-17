@@ -340,6 +340,16 @@ func (s *Server) handle(m *message) {
 		result = s.eng.ChangeBases()
 	case "atn/setChangesBase":
 		result, rerr = s.setChangesBase(m.Params)
+	case "atn/azurePlan":
+		result = s.azurePlan(m.Params)
+	case "atn/azureValidate":
+		result = s.azureValidate(m.Params)
+	case "atn/azureCancel":
+		result = s.eng.AzureCancel()
+	case "atn/azureResults":
+		result = s.azureResults()
+	case "atn/azureExpansion":
+		result = s.azureExpansion(m.Params)
 	case "atn/stats":
 		result = s.eng.Stats()
 	case "atn/references":

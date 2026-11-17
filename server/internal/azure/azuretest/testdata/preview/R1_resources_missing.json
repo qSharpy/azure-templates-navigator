@@ -1,0 +1,7 @@
+{
+ "message": "Job deploy: Environment no-such-environment could not be found. The environment does not exist or has not been authorized for use.\nA task is missing. The pipeline references a task called 'NoSuchTask'. This usually indicates the task isn't installed, and you may be able to install it from the Marketplace: https://marketplace.visualstudio.com. (Task version 1, job 'deploy', step ''.)",
+ "typeKey": "PipelineValidationException",
+ "typeName": "Microsoft.Azure.Pipelines.WebApi.PipelineValidationException, Microsoft.Azure.Pipelines.WebApi",
+ "errorCode": 0,
+ "eventId": 3000
+}

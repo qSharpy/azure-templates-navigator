@@ -3,6 +3,17 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [Unreleased]
+
+### Added
+
+- **Check in Azure DevOps** (opt-in, off by default). Azure DevOps itself compiles every pipeline your changes reach, without running it, at the commit your work started from and with your changes. Under each pipeline in *My changes*: whether it compiles or is rejected, the problems Azure reports at their lines (the ones your changes added marked *new*), whether atn agrees, and *Expanded YAML changed*, which opens the pipeline as Azure expanded it, base against your changes, in a diff editor.
+  - Start it from the Pipelines view's title or the *Check in Azure DevOps* row (VS Code), or the Pipelines tab's toolbar (IntelliJ). A dialog lists what will be sent and asks first, every time unless you choose otherwise.
+  - Your changed YAML files, unsaved editors included, are pushed as one commit to `refs/atn/preview/<you>/<branch>` (not a branch: no CI run, no pull request) and the ref is deleted after the check. No run is queued. If a repository refuses the push, only the pipelines that need it are left unchecked, with the server's reason.
+  - Signs in with the Azure CLI (`az login`), for your organization's tenant, so no personal access token is needed. `ATN_AZURE_TOKEN` takes a token directly.
+  - Settings: `azure.enabled`, `azure.keepSnapshots`, `azure.azPath`.
+- **`atn validate`** does the same in a terminal. It exits with 1 when your changes make Azure reject a pipeline and 2 when it couldn't check one; `--diff` prints how each expanded pipeline changed, `--format json` for scripts. `--root` can be given once per repository, for a change that spans a templates repository and the one that uses it.
+
 ## [2.8.0] — 2026-11-17
 
 ### Added

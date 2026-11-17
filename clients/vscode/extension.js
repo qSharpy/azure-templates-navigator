@@ -23,6 +23,8 @@ const SECTION = 'azure-templates-navigator';
 let client;
 /** @type {vscode.OutputChannel} */
 let output;
+/** atn/azureProgress notifications, for the running "Check in Azure DevOps". */
+const azureProgress = new vscode.EventEmitter();
 
 function serverPath(context) {
   const custom = vscode.workspace.getConfiguration(SECTION).get('server.path');
@@ -49,6 +51,11 @@ function serverSettings() {
     changes: {
       enabled: c.get('changes.enabled'),
       dimExistingProblems: c.get('changes.dimExistingProblems'),
+    },
+    azure: {
+      enabled: c.get('azure.enabled'),
+      keepSnapshots: c.get('azure.keepSnapshots'),
+      azPath: c.get('azure.azPath'),
     },
     repositories: {
       autoFetch: c.get('repositories.autoFetch'),
@@ -83,6 +90,11 @@ async function startClient(context, onServerChange) {
       outputChannel: output,
       markdown: { isTrusted: true, supportHtml: true },
       middleware: {
+        // Azure DevOps expansions shown in a diff (atn-azure:) are not
+        // workspace files: the server never sees them.
+        didOpen: (doc, next) => (doc.uri.scheme === 'atn-azure' ? undefined : next(doc)),
+        didChange: (ev, next) => (ev.document.uri.scheme === 'atn-azure' ? undefined : next(ev)),
+        didClose: (doc, next) => (doc.uri.scheme === 'atn-azure' ? undefined : next(doc)),
         // vscode-languageclient never sets supportThemeIcons, so `$(icon)` in
         // server hovers would render as literal text without this.
         async provideHover(document, position, token, next) {
@@ -103,6 +115,7 @@ async function startClient(context, onServerChange) {
     },
   );
   client.onNotification('atn/didChange', () => onServerChange());
+  client.onNotification('atn/azureProgress', p => azureProgress.fire(p));
   await client.start();
 }
 
@@ -235,6 +248,12 @@ async function activate(context) {
     }
   };
   const nodeArg = a => (a && (a.node || a.row)) || a || {};
+  // Expanded pipelines from Azure DevOps, served to the diff editor.
+  const expansions = new Map();
+  let expansionSeq = 0;
+  context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider('atn-azure', {
+    provideTextDocumentContent: uri => expansions.get(uri.path) || '',
+  }));
 
   const commands = {
     openTemplate: (a = {}) => openFile(a.filePath, { beside: !!a.beside, line: a.line }),
@@ -335,6 +354,97 @@ async function activate(context) {
       }
       await setPipelinesMode('changes');
       refreshViews();
+    },
+    // Pipelines view (My changes): Azure DevOps compiles the pipelines your
+    // changes reach, at the base and with your changes. The server makes a
+    // plan (reads only), the user confirms it, and the server runs exactly
+    // that plan (atn/azureValidate refuses another one).
+    checkInAzure: async () => {
+      const config = vscode.workspace.getConfiguration(SECTION);
+      if (!config.get('azure.enabled')) {
+        const on = await vscode.window.showInformationMessage(
+          'Check your changes in Azure DevOps?',
+          { modal: true, detail: 'Azure DevOps compiles each pipeline your changes reach, at the base and with your changes, without running it. Your changed YAML files are pushed to a refs/atn/preview/… ref of their repository first (no branch, no CI run), and you confirm each check. Signs in with the Azure CLI.' },
+          'Turn On');
+        if (on !== 'Turn On') return;
+        await config.update('azure.enabled', true, vscode.workspace.workspaceFolders ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global);
+        await new Promise(r => setTimeout(r, 300)); // let the server see the setting
+      }
+      const plan = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Azure DevOps: working out what to check…' },
+        () => request('atn/azurePlan', {}));
+      if (!plan) return;
+      if (plan.error) {
+        const pick = await vscode.window.showErrorMessage(`Can't check in Azure DevOps: ${plan.error}`, 'Show Output');
+        if (pick) output.show();
+        return;
+      }
+      const skipped = plan.pipelines.filter(p => p.skip).map(p => `${p.relativePath}: ${p.skip}`);
+      if (!plan.checkable) {
+        vscode.window.showInformationMessage(`Nothing to check in Azure DevOps.${skipped.length ? ' ' + skipped.join('; ') : ''}`);
+        return;
+      }
+      const consentKey = `azureConsent:${plan.organization}`;
+      if (!context.workspaceState.get(consentKey)) {
+        const lines = [plan.summary, ''];
+        for (const s of plan.snapshots) {
+          lines.push(`Pushed to ${s.ref} in ${s.repo}:`);
+          for (const f of s.files) lines.push(`  ${f.status} ${f.relativePath}`);
+          if (s.unpushedBase) lines.push('  (the base commit isn\'t on the server yet: its history is uploaded too)');
+        }
+        lines.push('', 'Checked:');
+        for (const p of plan.pipelines.filter(x => !x.skip)) lines.push(`  ${p.relativePath} with pipeline #${p.definition.id} ${p.definition.name}`);
+        if (skipped.length) lines.push('', 'Not checked:', ...skipped.map(x => '  ' + x));
+        lines.push('', `Signed in to ${plan.organization} as ${plan.user}.`);
+        const pick = await vscode.window.showInformationMessage(`Check ${plan.checkable} pipeline${plan.checkable === 1 ? '' : 's'} in Azure DevOps?`,
+          { modal: true, detail: lines.join('\n') }, 'Check', 'Always for This Workspace');
+        if (!pick) return;
+        if (pick === 'Always for This Workspace') await context.workspaceState.update(consentKey, true);
+      }
+      await setPipelinesMode('changes');
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Azure DevOps', cancellable: true }, (progress, token) =>
+        new Promise(resolve => {
+          let last = 0;
+          const sub = azureProgress.event(p => {
+            if (p.finished) {
+              sub.dispose();
+              resolve();
+              const fn = p.state === 'done' ? vscode.window.showInformationMessage : vscode.window.showWarningMessage;
+              fn(p.message);
+              return;
+            }
+            const pct = p.total ? Math.round(100 * p.done / p.total) : 0;
+            progress.report({ message: p.message, increment: Math.max(0, pct - last) });
+            last = Math.max(last, pct);
+          });
+          token.onCancellationRequested(() => request('atn/azureCancel'));
+          request('atn/azureValidate', { planId: plan.id }).then(res => {
+            if (!res || res.error) {
+              sub.dispose();
+              resolve();
+              vscode.window.showErrorMessage(`Can't check in Azure DevOps: ${(res && res.error) || 'the language server is not running'}`);
+            }
+          });
+        }));
+      refreshViews();
+    },
+    // An "Expanded YAML changed" row: Azure's expansion at the base and with
+    // your changes, side by side.
+    showExpansionDiff: async a => {
+      const uri = nodeArg(a).uri || (a && a.azureUri);
+      if (!uri) return;
+      const ex = await request('atn/azureExpansion', { uri });
+      if (!ex) {
+        vscode.window.showInformationMessage('No expansion to compare: check in Azure DevOps again.');
+        return;
+      }
+      const n = ++expansionSeq;
+      const name = path.basename(ex.title);
+      expansions.set(`/${n}/base/${name}`, ex.base);
+      expansions.set(`/${n}/change/${name}`, ex.change);
+      await vscode.commands.executeCommand('vscode.diff',
+        vscode.Uri.from({ scheme: 'atn-azure', path: `/${n}/base/${name}` }),
+        vscode.Uri.from({ scheme: 'atn-azure', path: `/${n}/change/${name}` }),
+        `${ex.title} (expanded by Azure DevOps): base ↔ your changes`);
     },
     // Code lens "N usages" above a template: peek its call sites.
     showUsages: async (a = {}) => {

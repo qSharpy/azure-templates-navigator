@@ -1,0 +1,7 @@
+{
+ "message": "The 'env' parameter value 'staging' is not a valid value.",
+ "typeKey": "PipelineValidationException",
+ "typeName": "Microsoft.Azure.Pipelines.WebApi.PipelineValidationException, Microsoft.Azure.Pipelines.WebApi",
+ "errorCode": 0,
+ "eventId": 3000
+}

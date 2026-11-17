@@ -33,6 +33,9 @@ class AtnSettings : PersistentStateComponent<AtnSettings.Data> {
         var completionRequiredParameters: Boolean = true
         var changesEnabled: Boolean = true
         var changesDimExistingProblems: Boolean = false
+        var azureEnabled: Boolean = false
+        var azureKeepSnapshots: Boolean = false
+        var azPath: String = ""
         var autoFetch: Boolean = true
         var cacheDir: String = ""
         var refreshIntervalHours: Int = 12
@@ -65,6 +68,11 @@ class AtnSettings : PersistentStateComponent<AtnSettings.Data> {
         add("graph", JsonObject().apply { addProperty("rootPath", d.graphRootPath) })
         add("completion", JsonObject().apply { addProperty("requiredParameters", d.completionRequiredParameters) })
         add("changes", JsonObject().apply { addProperty("enabled", d.changesEnabled); addProperty("dimExistingProblems", d.changesDimExistingProblems) })
+        add("azure", JsonObject().apply {
+            addProperty("enabled", d.azureEnabled)
+            addProperty("keepSnapshots", d.azureKeepSnapshots)
+            addProperty("azPath", d.azPath)
+        })
         add("repositories", JsonObject().apply {
             addProperty("autoFetch", d.autoFetch)
             addProperty("cacheDir", d.cacheDir)
@@ -108,6 +116,17 @@ class AtnSettingsConfigurable : BoundConfigurable("Azure Templates Navigator") {
                 row {
                     checkBox("Show problems that were already there before my changes as information").bindSelected(s::changesDimExistingProblems)
                         .comment("The Problems tool window's errors and warnings are then the ones your changes added. Verdicts and the Pipelines tab keep the real severities")
+                }
+            }
+            group("Check in Azure DevOps") {
+                row {
+                    checkBox("Offer to check my changes in Azure DevOps").bindSelected(s::azureEnabled)
+                        .comment("Azure DevOps compiles each pipeline your changes reach, at the base and with your changes, without running it (Pipelines tab, My Changes). Your changed YAML files are pushed to a refs/atn/preview/… ref first (no branch, no CI run), and you confirm each check")
+                }
+                row { checkBox("Keep the refs/atn/preview/… refs after a check").bindSelected(s::azureKeepSnapshots) }
+                row("Azure CLI (az):") {
+                    textField().bindText(s::azPath).align(AlignX.FILL)
+                        .comment("Signs in to Azure DevOps (az login --allow-no-subscriptions). Empty = az on the PATH")
                 }
             }
             group("Completion") {

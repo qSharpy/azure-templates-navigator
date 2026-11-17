@@ -123,6 +123,25 @@ class AtnService(private val project: Project) : Disposable {
             s?.setChangesBase(JsonObject().apply { addProperty("ref", ref) }) ?: CompletableFuture.completedFuture(null)
         }
 
+    /** What a check in Azure DevOps would do (reads only): a plan, or {error}. */
+    fun azurePlan() = call { it.azurePlan(JsonObject()) }
+
+    /** Starts the check of the plan the user confirmed: {started} or {error}. */
+    fun azureValidate(planId: String) = call { it.azureValidate(JsonObject().apply { addProperty("planId", planId) }) }
+
+    fun azureCancel() = call { it.azureCancel(JsonObject()) }
+
+    /** A pipeline's expanded YAML at the base and with your changes: {base, change, title}. */
+    fun azureExpansion(path: String) = call { it.azureExpansion(JsonObject().apply { addProperty("uri", fileUri(path)) }) }
+
+    /** Listener for atn/azureProgress, set while a check runs. */
+    @Volatile
+    var onAzureProgress: ((JsonObject) -> Unit)? = null
+
+    fun azureProgress(params: JsonElement?) {
+        params.obj()?.let { p -> onAzureProgress?.invoke(p) }
+    }
+
     fun execute(command: String, vararg args: Any): CompletableFuture<Any?> =
         server().thenCompose { s ->
             s?.workspaceService?.executeCommand(ExecuteCommandParams(command, args.toList()))
@@ -134,11 +153,10 @@ class AtnService(private val project: Project) : Disposable {
         if (file != null) addProperty("file", file)
     }).thenRun { fireChanged() }
 
-    fun pushSettings() {
+    fun pushSettings(): CompletableFuture<Void> =
         server().thenAccept { s ->
             s?.workspaceService?.didChangeConfiguration(DidChangeConfigurationParams(AtnSettings.getInstance().toServerJson()))
         }
-    }
 
     fun restart() {
         val manager = LanguageServerManager.getInstance(project)

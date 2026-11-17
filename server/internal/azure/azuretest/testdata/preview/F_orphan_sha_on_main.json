@@ -1,0 +1,7 @@
+{
+ "message": "Commit d1a05938c7014090ae4c1f93c10938745b3a69aa is either not present in repository atn-consumer or not reachable from branch refs/heads/main. Try again using a valid commit and branch",
+ "typeKey": "InvalidGitVersionSpec",
+ "typeName": "Microsoft.TeamFoundation.Build.WebApi.InvalidGitVersionSpec, Microsoft.TeamFoundation.Build2.WebApi",
+ "errorCode": 0,
+ "eventId": 3000
+}

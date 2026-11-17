@@ -68,6 +68,21 @@
           "default": false,
           "description": "Show the errors and warnings that were already there before your changes (at the commit your work started from) as information, so the Problems panel's errors and warnings are the ones your changes added. The Pipelines view and the verdicts keep the real severities."
         },
+        "azure-templates-navigator.azure.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Offer to check the pipelines your changes reach with Azure DevOps itself (*Check in Azure DevOps* in the Pipelines view's *My changes* mode). Azure compiles each pipeline at the base and with your changes, without running it. Your changed YAML files are pushed to a `refs/atn/preview/…` ref first (no branch, no CI run); you confirm each check. Signs in with the Azure CLI (`az login --allow-no-subscriptions`)."
+        },
+        "azure-templates-navigator.azure.keepSnapshots": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Keep the `refs/atn/preview/…` refs that hold your changes after a check in Azure DevOps (by default they are deleted when the check is done)."
+        },
+        "azure-templates-navigator.azure.azPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the Azure CLI (`az`), used to sign in to Azure DevOps. Empty: `az` on the PATH."
+        },
         "azure-templates-navigator.completion.requiredParameters": {
           "type": "boolean",
           "default": true,
@@ -161,6 +176,18 @@
         "title": "Compare My Changes With…",
         "category": "Azure Templates",
         "icon": "$(git-branch)"
+      },
+      {
+        "command": "azure-templates-navigator.checkInAzure",
+        "title": "Check in Azure DevOps",
+        "category": "Azure Templates",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "azure-templates-navigator.showExpansionDiff",
+        "title": "Show How the Expanded Pipeline Changed",
+        "category": "Azure Templates",
+        "icon": "$(diff)"
       },
       {
         "command": "azure-templates-navigator.openTemplate",
@@ -412,6 +439,11 @@
           "group": "navigation@1"
         },
         {
+          "command": "azure-templates-navigator.checkInAzure",
+          "when": "view == azure-templates-navigator.pipelinesView && azure-templates-navigator.pipelinesMode == changes && config.azure-templates-navigator.azure.enabled",
+          "group": "navigation@2"
+        },
+        {
           "command": "azure-templates-navigator.refresh",
           "when": "view == azure-templates-navigator.pipelinesView",
           "group": "navigation@9"
@@ -482,6 +514,11 @@
           "command": "azure-templates-navigator.showInGraph",
           "when": "view == azure-templates-navigator.templateTree && viewItem =~ /^file/",
           "group": "navigation@4"
+        },
+        {
+          "command": "azure-templates-navigator.showExpansionDiff",
+          "when": "view == azure-templates-navigator.pipelinesView && viewItem == azureExpansion",
+          "group": "inline@1"
         }
       ],
       "commandPalette": [
@@ -511,6 +548,10 @@
         },
         {
           "command": "azure-templates-navigator.showInGraph",
+          "when": "false"
+        },
+        {
+          "command": "azure-templates-navigator.showExpansionDiff",
           "when": "false"
         }
       ],

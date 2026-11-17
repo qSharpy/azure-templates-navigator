@@ -70,6 +70,7 @@ func (s *Server) changes() interface{} {
 		Fixed        []lspProblem           `json:"fixed"`
 		Existing     int                    `json:"existing"`
 		Changed      []string               `json:"changed"`
+		Azure        *azurePipeline         `json:"azure,omitempty"` // the last check in Azure DevOps
 	}
 	out := map[string]interface{}{
 		"available": r.Available,
@@ -85,10 +86,11 @@ func (s *Server) changes() interface{} {
 			Pipelines: f.Pipelines, New: s.problems(f.New), Fixed: s.fixedProblems(f.Fixed)})
 	}
 	pipes := []pipe{}
+	last := s.eng.AzureLast()
 	for _, c := range r.Pipelines {
 		pipes = append(pipes, pipe{URI: pathToURI(c.Path), FilePath: c.Path, RelativePath: c.RelativePath, Status: c.Status,
 			Title: c.Title(), Now: c.Now, Before: c.Before, New: s.problems(c.New), Fixed: s.fixedProblems(c.Fixed),
-			Existing: c.Existing, Changed: c.Changed})
+			Existing: c.Existing, Changed: c.Changed, Azure: s.azureFor(last, c.Path)})
 	}
 	out["bases"] = r.Bases
 	out["label"] = r.Label
@@ -101,6 +103,11 @@ func (s *Server) changes() interface{} {
 	out["noLonger"] = r.NoLonger
 	out["allPipelines"] = r.AllPipelines
 	out["allFailing"] = r.AllFailing
+	out["azureEnabled"] = s.eng.Settings().Azure.Enabled
+	if last != nil {
+		out["azure"] = map[string]interface{}{"state": last.State, "summary": last.Summary(), "stale": last.Stale,
+			"totals": last.Totals, "finishedAt": last.FinishedAt, "error": last.Error, "base": last.Base}
+	}
 	return out
 }
 

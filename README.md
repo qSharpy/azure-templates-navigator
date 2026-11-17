@@ -197,6 +197,9 @@ Click a row to open the file (at the problem or reference, where there is one); 
 | `repositories.azureDevOpsOrganization` / `azureDevOpsProject` | same | `""` |
 | `repositories.githubEnterpriseHost` | GitHub Enterprise host | `""` |
 | `repositories.gitPath` | git executable | `git` |
+| `azure.enabled` | Offer to check my changes in Azure DevOps | `false` |
+| `azure.keepSnapshots` | Keep the refs/atn/preview/… refs after a check | `false` |
+| `azure.azPath` | Azure CLI (az) | `""` (`az` on the PATH) |
 | `server.path` | Language server binary | bundled |
 
 `server/internal/engine/parity_test.go` (Go) and `SettingsParityTest` (Kotlin) fail the build if the two clients' settings drift from the server's schema.
@@ -207,6 +210,7 @@ The same binary validates pipelines in a terminal or in CI:
 
 ```bash
 atn check [--root DIR] [--format text|json|azure] [--strict] [--no-fetch] [--since REF] [--config FILE] [files…]
+atn validate [--root DIR]… [--since REF] [--yes] [--format text|json] [--diff] [--keep-snapshots] [files…]
 atn fetch [--root DIR]          # download every referenced repository
 atn repos [--root DIR]          # show how each alias resolves
 atn version
@@ -244,6 +248,21 @@ Pipelines your changes reach:
 
 It needs the history back to `REF`. Azure Pipelines checks out shallow by default, so set `fetchDepth: 0` on the checkout.
 When `REF` can't be found, or shares no commit with `HEAD`, `check` exits with 2 instead of comparing with the wrong commit.
+
+`validate` asks Azure DevOps to compile every pipeline your changes reach, at the base and with your changes, without running
+it ([Check in Azure DevOps](docs/README.md#check-in-azure-devops)). It pushes your changed files to a
+`refs/atn/preview/…` ref first, so it lists what it will send and asks; `--yes` skips the question (required without a terminal).
+It exits with 1 when your changes make Azure reject a pipeline, and 2 when it couldn't check one. `--diff` prints how each
+pipeline's expanded YAML changed. Pass `--root` once per repository when your changes span several (the templates repository
+and the one that uses them). It signs in with `az` (`az login` once), or a token in `ATN_AZURE_TOKEN` (or `SYSTEM_ACCESSTOKEN`, not tried in a pipeline yet).
+
+```
+$ atn validate --since origin/main
+  azure-pipelines.yml  ✗ rejected (1 problem, 1 new) · atn found no error
+azure-pipelines.yml:15:7: error: Unexpected value 'scriptt' [azure]
+
+Azure DevOps: 0 of 1 compile · 1 rejected because of your changes · 1 disagrees with atn
+```
 
 To get annotations in an Azure Pipelines run, add these steps:
 

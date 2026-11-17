@@ -1,0 +1,49 @@
+{
+ "count": 2,
+ "value": [
+  {
+   "id": 2,
+   "name": "atn-spike-consumer",
+   "path": "\\",
+   "type": "build",
+   "process": {
+    "type": 2,
+    "yamlFilename": "azure-pipelines.yml"
+   },
+   "repository": {
+    "id": "d2b3c4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+    "type": "TfsGit",
+    "name": "atn-consumer",
+    "url": "https://dev.azure.com/fabrikam/personal/_git/atn-consumer",
+    "defaultBranch": "refs/heads/main"
+   },
+   "_links": {
+    "web": {
+     "href": "https://dev.azure.com/fabrikam/8d0f6a2b-5c3e-4f71-a9d8-2e6b7c4f1a90/_build/definition?definitionId=2"
+    }
+   }
+  },
+  {
+   "id": 3,
+   "name": "atn-spike-ci-default",
+   "path": "\\",
+   "type": "build",
+   "process": {
+    "type": 2,
+    "yamlFilename": "ci-default.yml"
+   },
+   "repository": {
+    "id": "d2b3c4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+    "type": "TfsGit",
+    "name": "atn-consumer",
+    "url": "https://dev.azure.com/fabrikam/personal/_git/atn-consumer",
+    "defaultBranch": "main"
+   },
+   "_links": {
+    "web": {
+     "href": "https://dev.azure.com/fabrikam/8d0f6a2b-5c3e-4f71-a9d8-2e6b7c4f1a90/_build/definition?definitionId=3"
+    }
+   }
+  }
+ ]
+}

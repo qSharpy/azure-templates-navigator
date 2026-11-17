@@ -1,0 +1,7 @@
+{
+ "message": "/azure-pipelines.yml: Could not get the latest source version for repository atn-templates hosted on Azure Repos using ref refs/heads/does-not-exist.",
+ "typeKey": "PipelineValidationException",
+ "typeName": "Microsoft.Azure.Pipelines.WebApi.PipelineValidationException, Microsoft.Azure.Pipelines.WebApi",
+ "errorCode": 0,
+ "eventId": 3000
+}

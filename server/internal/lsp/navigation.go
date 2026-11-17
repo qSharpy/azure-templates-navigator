@@ -169,10 +169,12 @@ func (s *Server) pipelineCheck(path string) interface{} {
 		Dynamic      int            `json:"dynamic"`
 		Problems     []lspProblem   `json:"problems"`
 		Change       *changeSummary `json:"change,omitempty"` // what your work changed in it
+		Azure        *azurePipeline `json:"azure,omitempty"`  // the last check in Azure DevOps
 	}
+	last := s.eng.AzureLast()
 	conv := func(r engine.PipelineReport) report {
 		return report{URI: pathToURI(r.Path), FilePath: r.Path, RelativePath: r.RelativePath, Title: r.Title(), Verdict: r.Verdict(), Errors: r.Errors, Warnings: r.Warnings,
-			Templates: r.Templates, Dynamic: r.Dynamic, Problems: s.problems(r.Problems), Change: summaryOf(r.Change)}
+			Templates: r.Templates, Dynamic: r.Dynamic, Problems: s.problems(r.Problems), Change: summaryOf(r.Change), Azure: s.azureFor(last, r.Path)}
 	}
 	if path != "" {
 		r, ok := s.eng.PipelineCheck(path)

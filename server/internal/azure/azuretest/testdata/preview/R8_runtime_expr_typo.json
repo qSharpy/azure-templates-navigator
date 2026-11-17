@@ -1,0 +1,7 @@
+{
+ "message": "Unclosed function: 'eq'. Located at position 1 within expression: 'eq(variables['x'], 'y''. For more help, refer to https://go.microsoft.com/fwlink/?linkid=842996",
+ "typeKey": "PipelineValidationException",
+ "typeName": "Microsoft.Azure.Pipelines.WebApi.PipelineValidationException, Microsoft.Azure.Pipelines.WebApi",
+ "errorCode": 0,
+ "eventId": 3000
+}

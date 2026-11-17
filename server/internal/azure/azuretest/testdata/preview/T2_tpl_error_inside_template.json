@@ -1,0 +1,7 @@
+{
+ "message": "/templates/stages.yml@templates (Line: 15, Col: 7): Unexpected value 'scriptt'",
+ "typeKey": "PipelineValidationException",
+ "typeName": "Microsoft.Azure.Pipelines.WebApi.PipelineValidationException, Microsoft.Azure.Pipelines.WebApi",
+ "errorCode": 0,
+ "eventId": 3000
+}

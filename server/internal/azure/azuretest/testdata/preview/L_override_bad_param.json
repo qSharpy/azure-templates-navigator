@@ -1,0 +1,7 @@
+{
+ "message": "/azure-pipelines.yml (Line: 25, Col: 13): Unexpected parameter 'colour'",
+ "typeKey": "PipelineValidationException",
+ "typeName": "Microsoft.Azure.Pipelines.WebApi.PipelineValidationException, Microsoft.Azure.Pipelines.WebApi",
+ "errorCode": 0,
+ "eventId": 3000
+}

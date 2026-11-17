@@ -310,7 +310,7 @@ func (e *Engine) CodeLenses(path string) []Lens {
 			return nil
 		}
 		rep := e.pipelineReport(path)
-		return []Lens{{Line: line, Title: rep.Title() + e.changeNote(path), Count: rep.Errors + rep.Warnings, Kind: "pipeline"}}
+		return []Lens{{Line: line, Title: rep.Title() + e.changeNote(path) + e.azureNote(path), Count: rep.Errors + rep.Warnings, Kind: "pipeline"}}
 	}
 	if !f.isPipeline && len(sites) == 0 && len(f.params) == 0 && len(f.refs) == 0 {
 		return nil // not recognisably a template

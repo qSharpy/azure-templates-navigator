@@ -1,0 +1,1 @@
+{"$id":"1","innerException":null,"message":"TF400813: The user 'f4d5e6a7-b8c9-4d0e-9f1a-3b4c5d6e7f80' is not authorized to access this resource.","typeName":"Microsoft.TeamFoundation.Framework.Server.UnauthorizedRequestException, Microsoft.TeamFoundation.Framework.Server","typeKey":"UnauthorizedRequestException","errorCode":0,"eventId":3000}

@@ -41,6 +41,15 @@ type Settings struct {
 		// warnings are the ones the work added (lsp.publish).
 		DimExistingProblems bool `json:"dimExistingProblems"`
 	} `json:"changes"`
+	Azure struct {
+		// Enabled: offer to check the pipelines your changes reach with Azure
+		// DevOps itself (azure.go). Opt-in: it uploads your changed YAML.
+		Enabled bool `json:"enabled"`
+		// KeepSnapshots: keep the refs/atn/preview/… refs after a check.
+		KeepSnapshots bool `json:"keepSnapshots"`
+		// AzPath: the Azure CLI executable ("" = az on the PATH).
+		AzPath string `json:"azPath"`
+	} `json:"azure"`
 	Repositories repos.Config `json:"repositories"`
 }
 
@@ -180,6 +189,9 @@ type Engine struct {
 	// engine, so settings must not reconfigure it.
 	mirror map[string]string
 	shared bool
+
+	// Check in Azure DevOps (azure.go): the last report and the running job.
+	az azState
 }
 
 // linkSnap records, for a linked file, the parts other files depend on.
