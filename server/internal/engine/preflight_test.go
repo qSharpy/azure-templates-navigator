@@ -491,3 +491,44 @@ func TestDeepTemplateEditUpdatesRootPipeline(t *testing.T) {
 		t.Error("azure-pipelines.yml is now a template")
 	}
 }
+
+func TestRepositoryMissingEndpoint(t *testing.T) {
+	_, e := preflightWorkspace(t, map[string]string{
+		"azure-pipelines.yml": `
+trigger: none
+resources:
+  repositories:
+    - repository: azure
+      type: git
+      name: Platform/templates
+    - repository: gh
+      type: github
+      name: contoso/templates
+    - repository: "ghe"
+      type: githubenterprise
+      name: contoso/templates
+      endpoint: ghe-connection
+    - repository: bb
+      type: bitbucket
+      name: contoso/templates
+      endpoint: ""
+steps:
+  - script: echo
+`,
+	})
+	ds := withCode(e.Diagnose(filepath.Join(e.roots[0], "azure-pipelines.yml")), CodeRepoNoEndpoint)
+	var got []string
+	for _, d := range ds {
+		if d.Severity != SevError {
+			t.Errorf("%s: severity %d, want error", d.Message, d.Severity)
+		}
+		got = append(got, d.Message[:strings.Index(d.Message, ")")+1])
+	}
+	want := []string{"Repository 'gh' (type: github)", "Repository 'bb' (type: bitbucket)"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if d := ds[0]; d.Line != 6 || d.StartCol != 18 || d.EndCol != 20 {
+		t.Errorf("range of 'gh': line %d cols %d-%d, want line 6 cols 18-20", d.Line, d.StartCol, d.EndCol)
+	}
+}

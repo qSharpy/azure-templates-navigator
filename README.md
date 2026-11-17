@@ -1,6 +1,14 @@
 # Azure Templates Navigator
 
-IDE support for Azure Pipelines YAML templates, built as **one engine with thin IDE shells**:
+IDE support for Azure Pipelines YAML templates, for VS Code and the JetBrains IDEs.
+
+**[Feature guide](docs/README.md)**: every feature, with screenshots from both IDEs and the shortcuts for each.
+
+| VS Code | IntelliJ |
+|---|---|
+| ![The verdict above a pipeline in VS Code](docs/images/vscode/pipelineVerdict.png) | ![Call Hierarchy in IntelliJ](docs/images/intellij/callHierarchy.png) |
+
+It is built as **one engine with thin IDE shells**:
 
 ```
                  ┌─────────────────────────────────────────────┐
@@ -49,6 +57,7 @@ trigger:
 - **Errors** are what makes Azure reject the run when you click Run.
   - Template calls: missing or unknown parameters, values not in `values:`, missing templates and unknown aliases.
   - Aliases a template uses but the pipeline doesn't declare. Azure looks aliases up in the *pipeline's* `resources`.
+  - GitHub, GitHub Enterprise and Bitbucket repositories declared without `endpoint:` (the service connection).
   - Names: `dependsOn` naming a stage or job that doesn't exist, invalid or duplicate stage and job names.
   - Steps templates used under `jobs:`, defaults that aren't in `values:`, and tabs in indentation.
 - **Warnings** are what goes wrong once the run is under way.
@@ -123,7 +132,7 @@ Each feature is computed once by `atn` and shown through the IDE's own UI.
 |---|---|---|
 | Template parameters, types, defaults | Quick Documentation (hover) | Hover |
 | Who uses this template / parameter | Find Usages (Alt+F7); "N usages" Code Vision above the template | Find All References (Shift+Alt+F12); "N usages" code lens |
-| Pipeline ⇄ template chain | Call Hierarchy (Ctrl+Alt+H); the Azure Templates tool window | Show Call Hierarchy; the Azure Templates views |
+| Pipeline ⇄ template chain | Call Hierarchy (Ctrl+Alt+H); the Azure Templates tool window | Show Call Hierarchy (Shift+Alt+H); the Azure Templates views |
 | Stages / jobs / steps / template calls | Structure view (Cmd/Ctrl+F12) | Outline view, breadcrumbs |
 | Jump to the referenced template | Ctrl/Cmd+click, or the gutter icon on `template:` | Ctrl/Cmd+click |
 | Problems and fixes | Inspections + Alt+Enter; Diagnostics tab | Problems view + quick fixes |
@@ -131,6 +140,7 @@ Each feature is computed once by `atn` and shown through the IDE's own UI.
 | Template graph | Graph tab (IntelliJ toolbar and menus) | Graph panel |
 | Graph filters: problems, kinds, repositories, callers/callees | *Only Problems*, *Filter* popup and direction combo in the Graph tab toolbar | Filter bar under the graph toolbar; direction next to *Depth* |
 | Problems by type, most used / mis-called / unused templates, per-repository counts | Stats tab | Stats view |
+| Tips, one feature at a time | *Help → Azure Templates Navigator Tips*; *Get Started* under the bug button in the tool window header; mixed into *Help → Tip of the Day*. After an update, a balloon offers *What's new* | *Get Started* walkthrough (*Help and Feedback* view, *Azure Templates: Get Started*, *Help → Welcome → Walkthroughs*). After an update, a notification offers *What's New* |
 | Report a bug or an idea | Bug button in the Azure Templates tool window header; *Help → Report Azure Templates Navigator Issue…*; *Report to Azure Templates Navigator* in the IDE error dialog | *Help and Feedback* view in the Azure Templates sidebar; bug button on the Dependencies and Diagnostics views; *Azure Templates: Report Issue…* |
 
 ## Template graph and stats

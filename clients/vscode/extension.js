@@ -15,7 +15,7 @@ const vscode = require('vscode');
 const { LanguageClient, State } = require('vscode-languageclient/node');
 const { DependencyTreeProvider, DiagnosticsTreeProvider, PipelinesTreeProvider, RepositoriesTreeProvider, StatsTreeProvider, FeedbackTreeProvider } = require('./src/views');
 const { GraphViewProvider } = require('./src/graphView');
-const { issueUrl, REVIEW_URL } = require('./src/issue');
+const { issueUrl, CHANGELOG_URL, REVIEW_URL } = require('./src/issue');
 
 const SECTION = 'azure-templates-navigator';
 
@@ -100,6 +100,29 @@ async function startClient(context, onServerChange) {
   );
   client.onNotification('atn/didChange', () => onServerChange());
   await client.start();
+}
+
+/**
+ * Once per version: after an update, offer What's New; when no version was
+ * recorded yet (a new install, or an update from 2.6 or older), offer the
+ * walkthrough. Never awaited: the promise only settles when the
+ * notification is dismissed.
+ * @param {vscode.ExtensionContext} context
+ */
+function announceVersion(context) {
+  const version = context.extension.packageJSON.version;
+  const seen = context.globalState.get('lastVersion');
+  if (!version || seen === version) return;
+  context.globalState.update('lastVersion', version);
+  if (context.extensionMode === vscode.ExtensionMode.Test) return;
+  const actions = seen ? ["What's New", 'Get Started'] : ['Get Started'];
+  const message = seen
+    ? `Azure Templates Navigator was updated to ${version}.`
+    : `Azure Templates Navigator ${version}: Get Started shows what it can do, one feature at a time.`;
+  vscode.window.showInformationMessage(message, ...actions).then(pick => {
+    if (pick === 'Get Started') vscode.commands.executeCommand(`${SECTION}.getStarted`);
+    else if (pick === "What's New") vscode.commands.executeCommand(`${SECTION}.whatsNew`);
+  });
 }
 
 /**
@@ -342,6 +365,12 @@ async function activate(context) {
       if (a.open !== false) await vscode.env.openExternal(url);
       return url;
     },
+    // The walkthrough built from shared/tips/tips.json (see scripts/copy-assets.js).
+    getStarted: () => vscode.commands.executeCommand('workbench.action.openWalkthrough', `bogdanbujor.${SECTION}#getStarted`, false),
+    whatsNew: async (a = {}) => {
+      if (a.open !== false) await vscode.env.openExternal(CHANGELOG_URL);
+      return CHANGELOG_URL;
+    },
     // The Marketplace listing's review section. A string, for the same reason as above.
     giveFeedback: async (a = {}) => {
       if (a.open !== false) await vscode.env.openExternal(REVIEW_URL);
@@ -361,6 +390,7 @@ async function activate(context) {
     client.sendNotification('workspace/didChangeConfiguration', { settings: serverSettings() });
   }));
 
+  announceVersion(context);
   await startClient(context, refreshViews);
   onEditor(vscode.window.activeTextEditor);
   refreshViews();

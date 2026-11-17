@@ -309,8 +309,10 @@ class FeedbackTreeProvider {
   getChildren() {
     const ns = 'azure-templates-navigator';
     return [
+      { label: 'Get Started', description: 'tips, one feature at a time', icon: 'rocket', command: `${ns}.getStarted`, tooltip: 'Opens the Get Started walkthrough' },
+      { label: "What's New", icon: 'sparkle', command: `${ns}.whatsNew`, tooltip: 'Changelog on GitHub' },
       { label: 'Report a Bug', icon: 'bug', command: `${ns}.reportIssue`, args: [{ kind: 'bug' }], tooltip: 'Opens a new GitHub issue with your versions filled in' },
-      { label: 'Documentation', icon: 'book', command: 'vscode.open', args: [vscode.Uri.parse(DOCS_URL)], tooltip: 'README on GitHub' },
+      { label: 'Documentation', description: 'every feature, with shortcuts', icon: 'book', command: 'vscode.open', args: [vscode.Uri.parse(DOCS_URL)], tooltip: 'The feature guide on GitHub: screenshots and shortcuts for everything the extension does' },
       { label: 'Show Log', icon: 'output', command: `${ns}.showOutput`, tooltip: 'Useful to attach to a bug report' },
       { label: 'Suggest a Feature', icon: 'lightbulb', command: `${ns}.reportIssue`, args: [{ kind: 'feature' }], tooltip: 'Opens a new GitHub issue' },
       { label: 'Give Feedback', description: 'rate and review', icon: 'star-empty', command: `${ns}.giveFeedback`, tooltip: 'Rate and review the extension on the Visual Studio Marketplace' },

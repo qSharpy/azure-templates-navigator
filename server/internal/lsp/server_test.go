@@ -349,3 +349,51 @@ func TestPipelineVerdictLensAndRequest(t *testing.T) {
 		t.Fatalf("template got a report: %v", none)
 	}
 }
+
+// A document opened after its diagnostics were published gets them again, though
+// they haven't changed: LSP4IJ drops diagnostics for files that weren't open when
+// they arrived, so without this a file opened later showed no problems until edited.
+func TestDiagnosticsResentOnOpen(t *testing.T) {
+	root := t.TempDir()
+	_ = os.Mkdir(filepath.Join(root, ".git"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "a.yml"), []byte("parameters:\n  - name: x\n    type: string\nsteps:\n  - script: echo ${{ parameters.x }}\n"), 0o644)
+	pipe := "trigger: none\nsteps:\n  - template: a.yml\n"
+	pipePath := filepath.Join(root, "p.yml")
+	_ = os.WriteFile(pipePath, []byte(pipe), 0o644)
+
+	cl := startServer(t)
+	cl.call("initialize", map[string]interface{}{
+		"rootUri":               pathToURI(root),
+		"capabilities":          map[string]interface{}{},
+		"initializationOptions": map[string]interface{}{"settings": map[string]interface{}{"repositories": map[string]interface{}{"autoFetch": false}}},
+	}, nil)
+	_ = cl.c.notify("initialized", map[string]interface{}{})
+	forPipe := func(m *message) bool { return strings.Contains(string(m.Params), "p.yml") }
+	// The workspace is diagnosed before anything is opened.
+	cl.waitNote("textDocument/publishDiagnostics", forPipe)
+
+	uri := pathToURI(pipePath)
+	for i := 1; i <= 2; i++ { // opened, closed and opened again, never edited
+		_ = cl.c.notify("textDocument/didOpen", map[string]interface{}{"textDocument": map[string]interface{}{"uri": uri, "languageId": "yaml", "version": i, "text": pipe}})
+		m := cl.waitNote("textDocument/publishDiagnostics", forPipe)
+		if !strings.Contains(string(m.Params), "missing-required-param") {
+			t.Fatalf("open %d: %s", i, m.Params)
+		}
+		if i == 1 {
+			// Nothing changed, so the clients' views must not reload.
+			deadline := time.After(500 * time.Millisecond)
+		drain:
+			for {
+				select {
+				case n := <-cl.notes:
+					if n.Method == "atn/didChange" || n.Method == "workspace/codeLens/refresh" {
+						t.Fatalf("opening an unchanged file sent %s", n.Method)
+					}
+				case <-deadline:
+					break drain
+				}
+			}
+		}
+		_ = cl.c.notify("textDocument/didClose", map[string]interface{}{"textDocument": map[string]interface{}{"uri": uri}})
+	}
+}

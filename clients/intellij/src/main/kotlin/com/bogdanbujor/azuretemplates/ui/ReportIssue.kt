@@ -59,7 +59,8 @@ internal object IssueEnvironment {
 
 /**
  * The bug button in the tool window header (also Help | Report Azure Templates Navigator Issue…):
- * report a bug, read the docs, open the log, suggest a feature, or rate the plugin on JetBrains Marketplace.
+ * get started (tips), what's new, report a bug, read the docs, open the log, suggest a feature,
+ * or rate the plugin on JetBrains Marketplace.
  */
 class ReportIssueAction : DumbAwareAction() {
     private class Choice(val label: String, val icon: Icon, val hint: String = "", val run: () -> Unit)
@@ -69,8 +70,10 @@ class ReportIssueAction : DumbAwareAction() {
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project
         val choices = listOfNotNull(
+            Choice("Get Started", AllIcons.Actions.IntentionBulb, "tips, one feature at a time") { TipsDialog(project).show() },
+            Choice("What's New", AllIcons.Nodes.PpWeb, "changelog on GitHub") { BrowserUtil.browse(IssueReport.CHANGELOG_URL) },
             Choice("Report a Bug", AllIcons.Actions.StartDebugger, "GitHub issue with your versions filled in") { IssueEnvironment.open(project, IssueReport.Kind.BUG) },
-            Choice("Documentation", AllIcons.Actions.Help) { BrowserUtil.browse(IssueReport.DOCS_URL) },
+            Choice("Documentation", AllIcons.Actions.Help, "every feature, with shortcuts") { BrowserUtil.browse(IssueReport.DOCS_URL) },
             ActionManager.getInstance().getAction("ShowLog")?.let { showLog ->
                 Choice("Show Log", AllIcons.Debugger.Console, "lines starting with [atn]") {
                     ActionManager.getInstance().tryToExecute(showLog, null, null, ActionPlaces.UNKNOWN, true)

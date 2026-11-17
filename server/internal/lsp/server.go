@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -38,6 +39,11 @@ type Server struct {
 	// diagnostics of a newer one.
 	pubMu      sync.Mutex
 	pubVersion int // index version last announced with atn/didChange
+	// reopened: documents opened since the last publish. Their diagnostics are
+	// sent again even when unchanged: a client may drop diagnostics for files
+	// that weren't open when they arrived (LSP4IJ does), and an unchanged file
+	// would otherwise show none until it is edited.
+	reopened map[string]bool
 
 	// Requests run on workers so the reader keeps taking document changes
 	// and $/cancelRequest while a slow request is in flight.
@@ -57,10 +63,11 @@ const codeRequestCancelled = -32800
 // Serve runs the server until the client exits.
 func Serve(in io.Reader, out io.Writer) error {
 	s := &Server{
-		c:       &conn{r: bufio.NewReaderSize(in, 1<<16), w: out},
-		pubHash: map[string]string{},
-		queue:   make(chan *message, 256),
-		pending: map[string]bool{},
+		c:        &conn{r: bufio.NewReaderSize(in, 1<<16), w: out},
+		pubHash:  map[string]string{},
+		reopened: map[string]bool{},
+		queue:    make(chan *message, 256),
+		pending:  map[string]bool{},
 	}
 	for i := 0; i < workers; i++ {
 		go s.worker()
@@ -191,6 +198,9 @@ func (s *Server) handle(m *message) {
 		if json.Unmarshal(m.Params, &p) == nil {
 			if path := uriToPath(p.TextDocument.URI); path != "" {
 				s.eng.OpenDocument(path, p.TextDocument.Text)
+				s.mu.Lock()
+				s.reopened[filepath.Clean(path)] = true
+				s.mu.Unlock()
 				s.schedule(50 * time.Millisecond)
 			}
 		}
@@ -540,6 +550,16 @@ func (s *Server) publish() {
 		s.mu.Unlock()
 	}
 
+	s.mu.Lock()
+	reopened := s.reopened
+	s.reopened = map[string]bool{}
+	s.mu.Unlock()
+	for p := range reopened {
+		if _, ok := all[p]; !ok {
+			all[p] = s.eng.Diagnose(p)
+		}
+	}
+
 	paths := make([]string, 0, len(all))
 	for p := range all {
 		paths = append(paths, p)
@@ -556,7 +576,7 @@ func (s *Server) publish() {
 		h := fmt.Sprintf("%x", sha1.Sum(b))
 		s.mu.Lock()
 		prev, seen := s.pubHash[p]
-		if (seen && prev == h) || (!seen && len(lds) == 0) {
+		if (seen && prev == h && !reopened[p]) || (!seen && len(lds) == 0) {
 			s.mu.Unlock()
 			continue
 		}
@@ -566,7 +586,11 @@ func (s *Server) publish() {
 			s.pubHash[p] = h
 		}
 		s.mu.Unlock()
-		changed = true
+		// A re-sent file whose diagnostics didn't change doesn't change the
+		// views or verdicts, so it must not trigger atn/didChange.
+		if !seen || prev != h {
+			changed = true
+		}
 		_ = s.c.notify("textDocument/publishDiagnostics", map[string]interface{}{"uri": pathToURI(p), "diagnostics": lds})
 	}
 	if changed || delta.Version != s.pubVersion {

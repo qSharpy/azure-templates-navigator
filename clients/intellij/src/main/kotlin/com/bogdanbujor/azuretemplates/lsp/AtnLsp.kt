@@ -117,7 +117,9 @@ class AtnStartupActivity : com.intellij.openapi.startup.ProjectActivity {
         val hasYaml = File(base).walkTopDown().maxDepth(3)
             .onEnter { it.name !in setOf(".git", "node_modules", ".idea", "build", ".gradle") }
             .any { it.isFile && (it.name.endsWith(".yml") || it.name.endsWith(".yaml")) }
-        if (hasYaml) com.redhat.devtools.lsp4ij.LanguageServerManager.getInstance(project).start(SERVER_ID)
+        if (!hasYaml) return
+        com.redhat.devtools.lsp4ij.LanguageServerManager.getInstance(project).start(SERVER_ID)
+        com.bogdanbujor.azuretemplates.ui.AtnWelcome.announce(project)
     }
 }
 

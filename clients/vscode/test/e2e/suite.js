@@ -76,7 +76,7 @@ async function run() {
 
   // 6. commands registered
   const all = await vscode.commands.getCommands(true);
-  for (const c of ['searchTemplates', 'searchParameters', 'fetchRepository', 'fetchAllRepositories', 'refresh', 'expandTemplateGraph', 'showUsages', 'reportIssue', 'giveFeedback', 'showPipelineProblems']) {
+  for (const c of ['searchTemplates', 'searchParameters', 'fetchRepository', 'fetchAllRepositories', 'refresh', 'expandTemplateGraph', 'showUsages', 'reportIssue', 'giveFeedback', 'showPipelineProblems', 'getStarted', 'whatsNew']) {
     assert.ok(all.includes(`azure-templates-navigator.${c}`), c);
   }
   // 6b. Report Issue: a pre-filled GitHub URL with versions and nothing local
@@ -93,6 +93,17 @@ async function run() {
   assert.strictEqual(feature.searchParams.get('labels'), 'enhancement');
   const review = await vscode.commands.executeCommand('azure-templates-navigator.giveFeedback', { open: false });
   assert.ok(review.startsWith('https://marketplace.visualstudio.com/items?itemName=bogdanbujor.azure-templates-navigator'));
+  // 6c. Get Started: one walkthrough step per shared tip, each with its media
+  const tips = require(path.join(__dirname, '..', '..', '..', '..', 'shared', 'tips', 'tips.json')).tips;
+  const steps = ext.packageJSON.contributes.walkthroughs[0].steps;
+  assert.deepStrictEqual(steps.map(s => s.id), tips.map(t => t.id));
+  for (const s of steps) {
+    const media = s.media.image || s.media.markdown;
+    assert.ok(require('fs').existsSync(path.join(ext.extensionPath, media)), media);
+  }
+  await vscode.commands.executeCommand('azure-templates-navigator.getStarted');
+  await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+  assert.ok((await vscode.commands.executeCommand('azure-templates-navigator.whatsNew', { open: false })).endsWith('/CHANGELOG.md'));
   // 7. navigation on an extends: template — usages lens, references, outline
   const base = vscode.Uri.file(path.join(root, 'extends/platform-templates/pipelines/secure-base.yml'));
   await vscode.workspace.openTextDocument(base);

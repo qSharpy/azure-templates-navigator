@@ -306,6 +306,7 @@ resources:
       type: github
       name: contoso/pipeline-templates
       ref: refs/heads/main
+      endpoint: github-connection
 stages:
   - template: stages/deploy.yml@shared
     parameters:
@@ -332,7 +333,7 @@ stages:
 	if after[CodeMissingRequired] != 1 || after[CodeUnknownParam] != 1 || len(after) != 2 {
 		t.Fatalf("after fetch: %+v", after)
 	}
-	h, _ := e.HoverAt(p, 8, 10, ClientFeatures{})
+	h, _ := e.HoverAt(p, 9, 10, ClientFeatures{})
 	if !strings.Contains(h.Markdown, "cached, fetched") || !strings.Contains(h.Markdown, "**env**") {
 		t.Errorf("hover after fetch: %s", h.Markdown)
 	}

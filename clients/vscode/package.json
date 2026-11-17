@@ -2,7 +2,7 @@
   "name": "azure-templates-navigator",
   "displayName": "Azure Templates Navigator",
   "description": "Hover, validate, autocomplete and navigate Azure Pipelines YAML templates — including templates from other repositories, which are downloaded automatically.",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "publisher": "bogdanbujor",
   "license": "MIT",
   "icon": "logo.png",
@@ -244,6 +244,18 @@
         "icon": "$(bug)"
       },
       {
+        "command": "azure-templates-navigator.getStarted",
+        "title": "Get Started",
+        "category": "Azure Templates",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "azure-templates-navigator.whatsNew",
+        "title": "What's New",
+        "category": "Azure Templates",
+        "icon": "$(sparkle)"
+      },
+      {
         "command": "azure-templates-navigator.giveFeedback",
         "title": "Give Feedback (Rate and Review)",
         "category": "Azure Templates",
@@ -466,7 +478,134 @@
           "group": "navigation@90"
         }
       ]
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "getStarted",
+        "title": "Get Started with Azure Templates Navigator",
+        "description": "What the extension does for your Azure Pipelines YAML, one feature at a time.",
+        "steps": [
+          {
+            "id": "pipelineVerdict",
+            "title": "Will this pipeline run?",
+            "description": "Every pipeline shows a verdict above its first line, covering the pipeline and every template it reaches. Click it to list the problems. The **Pipelines** view lists every pipeline in the workspace, failing first.\n[Open the Pipelines View](command:azure-templates-navigator.pipelinesView.focus)",
+            "media": {
+              "image": "media/tips/pipelineVerdict.png",
+              "altText": "Will this pipeline run?"
+            },
+            "completionEvents": [
+              "onCommand:azure-templates-navigator.pipelinesView.focus"
+            ]
+          },
+          {
+            "id": "hoverParameters",
+            "title": "See a template's parameters",
+            "description": "Hover a \"template:\" line to see the template's parameters, with their types, defaults and allowed values. Required ones are highlighted. Ctrl/Cmd+click opens the template.\n[Search Templates](command:azure-templates-navigator.searchTemplates)",
+            "media": {
+              "image": "media/tips/hoverParameters.png",
+              "altText": "See a template's parameters"
+            },
+            "completionEvents": [
+              "onCommand:azure-templates-navigator.searchTemplates"
+            ]
+          },
+          {
+            "id": "completeRequired",
+            "title": "Complete a template call in one go",
+            "description": "Completing a template path also inserts a \"parameters:\" block with the template's required parameters. Press Tab to move between the values.\n[Completion Settings](command:workbench.action.openSettings?%5B%22azure-templates-navigator.completion%22%5D)",
+            "media": {
+              "image": "media/tips/completeRequired.gif",
+              "altText": "Complete a template call in one go"
+            },
+            "completionEvents": [
+              "onCommand:workbench.action.openSettings"
+            ]
+          },
+          {
+            "id": "quickFixes",
+            "title": "Fix template calls from the problem",
+            "description": "Missing required parameters, misspelled names (\"did you mean\"), values outside \"values:\" and missing templates are reported as you type. Most of them have a quick fix: press Ctrl+. (Cmd+. on macOS) on the problem.\n[Open the Problems View](command:workbench.actions.view.problems)",
+            "media": {
+              "image": "media/tips/quickFixes.gif",
+              "altText": "Fix template calls from the problem"
+            },
+            "completionEvents": [
+              "onCommand:workbench.actions.view.problems"
+            ]
+          },
+          {
+            "id": "findUsages",
+            "title": "Who uses this template?",
+            "description": "Before you change a template, check who calls it. The \"N usages\" lens above the template lists its call sites, and Find All References (Shift+Alt+F12) works on templates and on their parameters.",
+            "media": {
+              "image": "media/tips/findUsages.png",
+              "altText": "Who uses this template?"
+            }
+          },
+          {
+            "id": "callHierarchy",
+            "title": "Follow the chain from pipeline to template",
+            "description": "On a template, *Show Call Hierarchy* (Shift+Alt+H) lists the templates that call it, the pipelines that call those, and so on up to every pipeline that reaches it. Its toggle shows the other direction: everything a pipeline calls.",
+            "media": {
+              "image": "media/tips/callHierarchy.png",
+              "altText": "Follow the chain from pipeline to template"
+            }
+          },
+          {
+            "id": "templateGraph",
+            "title": "See how pipelines and templates connect",
+            "description": "The **Template Graph** draws the current file with its callers and callees, or the whole workspace. Bigger nodes are used more. Click a node to light up everything that reaches it and everything it calls, and filter to problems, kinds or repositories.\n[Open the Graph](command:azure-templates-navigator.expandTemplateGraph)",
+            "media": {
+              "image": "media/tips/templateGraph.png",
+              "altText": "See how pipelines and templates connect"
+            },
+            "completionEvents": [
+              "onCommand:azure-templates-navigator.expandTemplateGraph"
+            ]
+          },
+          {
+            "id": "otherRepositories",
+            "title": "Templates from other repositories",
+            "description": "\"template: x.yml@templates\" works like a local template: the repository is downloaded into a shared cache with your normal git credentials, and refreshed in the background. The **Repositories** view shows each one's state and the templates you use from it.\n[Open the Repositories View](command:azure-templates-navigator.repositoriesView.focus)",
+            "media": {
+              "image": "media/tips/otherRepositories.png",
+              "altText": "Templates from other repositories"
+            },
+            "completionEvents": [
+              "onCommand:azure-templates-navigator.repositoriesView.focus"
+            ]
+          },
+          {
+            "id": "teamConfig",
+            "title": "When a repository can't be found",
+            "description": "Most repositories need no setup. If one shows as failed or unconfigured in the **Repositories** view, or your templates live in a folder rather than their own repository, commit \".azure-templates-navigator.json\" at the repository root. \"urls\" pins an alias's clone URL. \"localPaths\" points an alias at a folder, which is then read as is, with no download. Everyone gets the same mapping, in VS Code, IntelliJ and the \"atn\" CLI.",
+            "media": {
+              "markdown": "media/tips/teamConfig.md"
+            }
+          },
+          {
+            "id": "stats",
+            "title": "Stats for template owners",
+            "description": "The **Stats** view shows problems by type, the most used and most mis-called templates, templates nothing references, and counts per repository. Click a row to open the file, or *Show in Graph* to see it in context.\n[Open the Stats View](command:azure-templates-navigator.statsView.focus)",
+            "media": {
+              "image": "media/tips/stats.png",
+              "altText": "Stats for template owners"
+            },
+            "completionEvents": [
+              "onCommand:azure-templates-navigator.statsView.focus"
+            ]
+          },
+          {
+            "id": "cliCheck",
+            "title": "The same checks in CI",
+            "description": "The \"atn\" binary behind this extension also runs in a terminal or a pipeline: \"atn check\" prints every pipeline's verdict and exits with 1 on errors. \"--format azure\" turns the problems into annotations on the run. See the [CLI documentation](https://github.com/qSharpy/azure-templates-navigator#cli).",
+            "media": {
+              "markdown": "media/tips/cliCheck.md"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "assets": "node scripts/copy-assets.js",

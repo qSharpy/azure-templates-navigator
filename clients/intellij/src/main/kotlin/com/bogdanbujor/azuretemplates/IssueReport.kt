@@ -12,7 +12,10 @@ import java.nio.charset.StandardCharsets
  */
 object IssueReport {
     const val ISSUES_URL = "https://github.com/qSharpy/azure-templates-navigator/issues"
-    const val DOCS_URL = "https://github.com/qSharpy/azure-templates-navigator#readme"
+    /** The feature guide: every feature with screenshots and shortcuts, for both IDEs. */
+    const val DOCS_URL = "https://github.com/qSharpy/azure-templates-navigator/blob/main/docs/README.md"
+    /** "What's new": the changelog shared by the server and both clients. */
+    const val CHANGELOG_URL = "https://github.com/qSharpy/azure-templates-navigator/blob/main/CHANGELOG.md"
 
     /** "Give Feedback": the plugin's reviews on JetBrains Marketplace (30272 is its Marketplace id). */
     const val REVIEW_URL = "https://plugins.jetbrains.com/plugin/30272-azure-templates-navigator/reviews"

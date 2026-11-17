@@ -3,6 +3,23 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [2.7.0] — 2026-11-17
+
+### Added
+
+- **Feature guide.** [docs/README.md](https://github.com/qSharpy/azure-templates-navigator/blob/main/docs/README.md) shows every feature with screenshots and GIFs from both IDEs, and the default shortcut for each in VS Code and IntelliJ, on macOS and on Windows/Linux. *Documentation* in *Help and Feedback* (VS Code) and under the tool window's bug button (IntelliJ) opens it.
+- **Tips, one feature at a time.** Eleven short tips, from "will this pipeline run?" to `atn check` in CI. Most have a screenshot or a GIF of the feature. One list for both IDEs, in `shared/tips/tips.json`.
+  - VS Code: a *Get Started* walkthrough, opened from the *Help and Feedback* view, *Azure Templates: Get Started*, or *Help → Welcome*. Most steps have a button that opens the view or command they describe.
+  - IntelliJ: the tips appear in *Help → Tip of the Day*. *Help → Azure Templates Navigator Tips* (or *Get Started* under the tool window's bug button) pages through only these, in a window that stays open while you try them in the editor.
+
+  ![The Get Started walkthrough in VS Code](https://raw.githubusercontent.com/qSharpy/azure-templates-navigator/main/docs/images/vscode/walkthrough.png)
+- **Check: repository without a service connection.** A `type: github`, `githubenterprise` or `bitbucket` repository under `resources.repositories` without `endpoint:` is an error (`repository-missing-endpoint`): Azure rejects the run when it is queued. Azure Repos (`type: git`) needs no endpoint.
+- **What's New.** Once per version, after an update, a notification offers the changelog and the tips. *What's New* is also in *Help and Feedback* (VS Code) and under the bug button (IntelliJ).
+
+### Fixed
+
+- **IntelliJ: a file opened after the language server started showed no problems** until it was edited. The server sent each file's diagnostics once and only again when they changed, and IntelliJ (LSP4IJ) doesn't keep the ones that arrive before a file is opened. Now the server sends a file's diagnostics each time it is opened. This also affects 2.6.0 and earlier.
+
 ## [2.6.0] — 2026-11-16
 
 ### Changed

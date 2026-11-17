@@ -6,7 +6,10 @@
 // Only versions and the OS go in the body: no paths, settings or workspace data.
 
 const ISSUES_URL = 'https://github.com/qSharpy/azure-templates-navigator/issues';
-const DOCS_URL = 'https://github.com/qSharpy/azure-templates-navigator#readme';
+// The feature guide: every feature with screenshots and shortcuts, for both IDEs.
+const DOCS_URL = 'https://github.com/qSharpy/azure-templates-navigator/blob/main/docs/README.md';
+// "What's New": the changelog shared by the server and both clients.
+const CHANGELOG_URL = 'https://github.com/qSharpy/azure-templates-navigator/blob/main/CHANGELOG.md';
 // "Give Feedback": the Marketplace listing's rating and review section.
 const REVIEW_URL = 'https://marketplace.visualstudio.com/items?itemName=bogdanbujor.azure-templates-navigator&ssr=false#review-details';
 
@@ -44,4 +47,4 @@ function issueUrl(kind, { title = '', environment }) {
   return url.length <= MAX_URL ? url : `${ISSUES_URL}/new?${new URLSearchParams({ labels: spec.label, title })}`;
 }
 
-module.exports = { issueUrl, ISSUES_URL, DOCS_URL, REVIEW_URL };
+module.exports = { issueUrl, ISSUES_URL, DOCS_URL, CHANGELOG_URL, REVIEW_URL };

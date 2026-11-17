@@ -32,6 +32,7 @@ const (
 	CodeNoDefault         = "runtime-param-no-default"
 	CodeOutputVariable    = "unknown-output-variable"
 	CodeOutputNotIsOutput = "output-variable-not-output"
+	CodeRepoNoEndpoint    = "repository-missing-endpoint"
 )
 
 // ---------------------------------------------------------------------------
@@ -60,7 +61,47 @@ func (e *Engine) checkStructure(f *fileInfo) []Diagnostic {
 			out = append(out, d)
 		}
 	}
+	out = append(out, checkEndpoints(f)...)
 	return out
+}
+
+// checkEndpoints: a repository on GitHub, GitHub Enterprise or Bitbucket is
+// reached through a service connection, so Azure rejects a declaration without
+// `endpoint:` when the run is queued. Azure Repos (`type: git`) needs none.
+func checkEndpoints(f *fileInfo) []Diagnostic {
+	var decls []pipeline.RepoDecl
+	for _, d := range f.repos {
+		switch d.Type {
+		case "github", "githubenterprise", "bitbucket":
+			if strings.TrimSpace(d.Endpoint) == "" {
+				decls = append(decls, d)
+			}
+		}
+	}
+	sort.Slice(decls, func(i, j int) bool { return decls[i].Line < decls[j].Line })
+	var out []Diagnostic
+	for _, d := range decls {
+		line := f.lines[d.Line]
+		col, end := 0, len(line)
+		if k := strings.Index(line, "repository"); k >= 0 {
+			if i := strings.Index(line[k:], d.Alias); i >= 0 {
+				col, end = k+i, k+i+len(d.Alias)
+			}
+		}
+		out = append(out, Diagnostic{Line: d.Line, StartCol: col, EndLine: d.Line, EndCol: end, Severity: SevError, Code: CodeRepoNoEndpoint,
+			Message: fmt.Sprintf("Repository '%s' (type: %s) has no 'endpoint:'. Azure reaches %s repositories through a service connection, so the run fails when it is queued", d.Alias, d.Type, repoHost(d.Type))})
+	}
+	return out
+}
+
+func repoHost(typ string) string {
+	switch typ {
+	case "githubenterprise":
+		return "GitHub Enterprise"
+	case "bitbucket":
+		return "Bitbucket"
+	}
+	return "GitHub"
 }
 
 // checkDefault reports a default that is not one of the parameter's

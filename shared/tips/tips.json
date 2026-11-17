@@ -1,0 +1,108 @@
+{
+  "$comment": "Tips shown by both IDEs. VS Code: the Get Started walkthrough (clients/vscode/scripts/copy-assets.js writes the steps into package.json). IntelliJ: Tip of the Day and the plugin's Tips dialog (Gradle turns each tip into tips/AzureTemplates_<id>.html; plugin.xml lists them, TipsParityTest checks it). Text supports **bold**, *italic*, `code` and [links](https://…). In `intellij`, {shortcut:ActionId} becomes that action's shortcut. `example` is shown as a code block next to the tip, highlighted as `exampleLanguage`.",
+  "tips": [
+    {
+      "id": "pipelineVerdict",
+      "title": "Will this pipeline run?",
+      "vscode": "Every pipeline shows a verdict above its first line, covering the pipeline and every template it reaches. Click it to list the problems. The **Pipelines** view lists every pipeline in the workspace, failing first.",
+      "intellij": "Every pipeline shows a verdict above its first line, covering the pipeline and every template it reaches. Click it to list the problems. The **Pipelines** tab of the Azure Templates tool window lists every pipeline in the project, failing first.",
+      "example": "✗ Will fail when queued: 2 errors, 1 warning\ntrigger:\n  branches:\n    include: [main]",
+      "exampleLanguage": "yaml",
+      "vscodeButton": "Open the Pipelines View",
+      "vscodeCommand": "azure-templates-navigator.pipelinesView.focus"
+    },
+    {
+      "id": "hoverParameters",
+      "title": "See a template's parameters",
+      "vscode": "Hover a `template:` line to see the template's parameters, with their types, defaults and allowed values. Required ones are highlighted. Ctrl/Cmd+click opens the template.",
+      "intellij": "Put the caret on a `template:` line and press {shortcut:QuickJavaDoc} (Quick Documentation) to see the template's parameters, with their types, defaults and allowed values. Ctrl/Cmd+click, or the gutter icon, opens the template.",
+      "example": "- template: build.yml        ← hover here\n  parameters:\n    configuration: Release",
+      "exampleLanguage": "yaml",
+      "vscodeButton": "Search Templates",
+      "vscodeCommand": "azure-templates-navigator.searchTemplates"
+    },
+    {
+      "id": "completeRequired",
+      "title": "Complete a template call in one go",
+      "vscode": "Completing a template path also inserts a `parameters:` block with the template's required parameters. Press Tab to move between the values.",
+      "intellij": "Completing a template path also inserts a `parameters:` block with the template's required parameters. Press Tab to move between the values. Turn it off in *Settings | Tools | Azure Templates Navigator*.",
+      "example": "- template: deploy.yml\n  parameters:\n    environment: |\n    serviceConnection: ",
+      "exampleLanguage": "yaml",
+      "vscodeButton": "Completion Settings",
+      "vscodeCommand": "workbench.action.openSettings",
+      "vscodeArgs": "azure-templates-navigator.completion"
+    },
+    {
+      "id": "quickFixes",
+      "title": "Fix template calls from the problem",
+      "vscode": "Missing required parameters, misspelled names (\"did you mean\"), values outside `values:` and missing templates are reported as you type. Most of them have a quick fix: press Ctrl+. (Cmd+. on macOS) on the problem.",
+      "intellij": "Missing required parameters, misspelled names (\"did you mean\"), values outside `values:` and missing templates are reported as you type. Most of them have a quick fix: press {shortcut:ShowIntentionActions} on the problem.",
+      "example": "- template: build.yml\n  parameters:\n    confguration: Release   ← Unknown parameter 'confguration'. Did you mean 'configuration'?",
+      "exampleLanguage": "yaml",
+      "vscodeButton": "Open the Problems View",
+      "vscodeCommand": "workbench.actions.view.problems"
+    },
+    {
+      "id": "findUsages",
+      "title": "Who uses this template?",
+      "vscode": "Before you change a template, check who calls it. The \"N usages\" lens above the template lists its call sites, and Find All References (Shift+Alt+F12) works on templates and on their parameters.",
+      "intellij": "Before you change a template, check who calls it. The \"N usages\" hint above the template lists its call sites, and Find Usages ({shortcut:FindUsages}) works on templates and on their parameters. {shortcut:ShowUsages} shows them in a popup.",
+      "example": "3 usages\nparameters:\n  - name: configuration\n    type: string",
+      "exampleLanguage": "yaml"
+    },
+    {
+      "id": "callHierarchy",
+      "title": "Follow the chain from pipeline to template",
+      "vscode": "On a template, *Show Call Hierarchy* (Shift+Alt+H) lists the templates that call it, the pipelines that call those, and so on up to every pipeline that reaches it. Its toggle shows the other direction: everything a pipeline calls.",
+      "intellij": "On a template, Call Hierarchy ({shortcut:CallHierarchy}) lists the templates that call it, the pipelines that call those, and so on up to every pipeline that reaches it. Its toolbar shows the other direction: everything a pipeline calls.",
+      "example": "secure-base.yml\n  ├─ dotnet-service.yml\n  │    └─ payments/azure-pipelines.yml\n  ├─ analytics/azure-pipelines.yml\n  └─ search/azure-pipelines.yml",
+      "exampleLanguage": "text"
+    },
+    {
+      "id": "templateGraph",
+      "title": "See how pipelines and templates connect",
+      "vscode": "The **Template Graph** draws the current file with its callers and callees, or the whole workspace. Bigger nodes are used more. Click a node to light up everything that reaches it and everything it calls, and filter to problems, kinds or repositories.",
+      "intellij": "The **Graph** tab of the Azure Templates tool window draws the current file with its callers and callees, or the whole project. Bigger nodes are used more. Click a node to light up everything that reaches it and everything it calls, and use *Only Problems* or *Filter* in its toolbar.",
+      "example": "azure-pipelines.yml\n  └─ build.yml\n       ├─ steps/restore.yml\n       └─ steps/test.yml",
+      "exampleLanguage": "text",
+      "vscodeButton": "Open the Graph",
+      "vscodeCommand": "azure-templates-navigator.expandTemplateGraph"
+    },
+    {
+      "id": "otherRepositories",
+      "title": "Templates from other repositories",
+      "vscode": "`template: x.yml@templates` works like a local template: the repository is downloaded into a shared cache with your normal git credentials, and refreshed in the background. The **Repositories** view shows each one's state and the templates you use from it.",
+      "intellij": "`template: x.yml@templates` works like a local template: the repository is downloaded into a shared cache with your normal git credentials, and refreshed in the background. The **Repositories** tab shows each one's state and the templates you use from it.",
+      "example": "resources:\n  repositories:\n    - repository: templates\n      type: github\n      name: my-org/pipeline-templates\nsteps:\n  - template: build.yml@templates",
+      "exampleLanguage": "yaml",
+      "vscodeButton": "Open the Repositories View",
+      "vscodeCommand": "azure-templates-navigator.repositoriesView.focus"
+    },
+    {
+      "id": "teamConfig",
+      "title": "When a repository can't be found",
+      "vscode": "Most repositories need no setup. If one shows as failed or unconfigured in the **Repositories** view, or your templates live in a folder rather than their own repository, commit `.azure-templates-navigator.json` at the repository root. `urls` pins an alias's clone URL. `localPaths` points an alias at a folder, which is then read as is, with no download. Everyone gets the same mapping, in VS Code, IntelliJ and the `atn` CLI.",
+      "intellij": "Most repositories need no setup. If one shows as failed or unconfigured in the **Repositories** tab, or your templates live in a folder rather than their own repository, commit `.azure-templates-navigator.json` at the repository root. `urls` pins an alias's clone URL. `localPaths` points an alias at a folder, which is then read as is, with no download. Everyone gets the same mapping, in IntelliJ, VS Code and the `atn` CLI.",
+      "example": "{\n  \"repositories\": {\n    \"urls\": { \"templates\": \"git@github.com:my-org/pipeline-templates.git\" },\n    \"localPaths\": { \"shared\": \"./pipeline-templates\" }\n  }\n}",
+      "exampleLanguage": "json"
+    },
+    {
+      "id": "stats",
+      "title": "Stats for template owners",
+      "vscode": "The **Stats** view shows problems by type, the most used and most mis-called templates, templates nothing references, and counts per repository. Click a row to open the file, or *Show in Graph* to see it in context.",
+      "intellij": "The **Stats** tab shows problems by type, the most used and most mis-called templates, templates nothing references, and counts per repository. Click a row to open the file, or *Show in Graph* to see it in context.",
+      "example": "Most used\n  build.yml           42 calls · 17 pipelines\n  deploy.yml          31 calls · 12 pipelines\nNot referenced in this workspace\n  legacy/old-build.yml",
+      "exampleLanguage": "text",
+      "vscodeButton": "Open the Stats View",
+      "vscodeCommand": "azure-templates-navigator.statsView.focus"
+    },
+    {
+      "id": "cliCheck",
+      "title": "The same checks in CI",
+      "vscode": "The `atn` binary behind this extension also runs in a terminal or a pipeline: `atn check` prints every pipeline's verdict and exits with 1 on errors. `--format azure` turns the problems into annotations on the run. See the [CLI documentation](https://github.com/qSharpy/azure-templates-navigator#cli).",
+      "intellij": "The `atn` binary behind this plugin also runs in a terminal or a pipeline: `atn check` prints every pipeline's verdict and exits with 1 on errors. `--format azure` turns the problems into annotations on the run. See the [CLI documentation](https://github.com/qSharpy/azure-templates-navigator#cli).",
+      "example": "$ atn check\nPipelines:\n  azure-pipelines.yml     ✗ Will fail when queued: 1 error\n  pipelines/nightly.yml   ✓ No problems found before running",
+      "exampleLanguage": "text"
+    }
+  ]
+}
