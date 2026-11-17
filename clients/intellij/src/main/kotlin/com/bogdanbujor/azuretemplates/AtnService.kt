@@ -84,7 +84,9 @@ class AtnService(private val project: Project) : Disposable {
         })
     }
     fun stats() = call { it.stats(JsonObject()) }
-    fun workspaceDiagnostics() = call { it.workspaceDiagnostics(JsonObject()) }
+    /** Every file's problems; with [onlyNew] (Only My Changes) an object with only the ones your changes added. */
+    fun workspaceDiagnostics(onlyNew: Boolean = false) =
+        call { it.workspaceDiagnostics(JsonObject().apply { if (onlyNew) addProperty("onlyNew", true) }) }
     fun templates() = call { it.templates(JsonObject()) }
     /** Parameters of the template referenced on [line] of [path] (or of [path] itself). */
     fun parameters(path: String, line: Int) = call {
@@ -105,6 +107,21 @@ class AtnService(private val project: Project) : Disposable {
 
     /** Verdicts of every root pipeline, failing first (null when diagnostics are off). */
     fun pipelineChecks() = call { it.pipelineCheck(JsonObject()) }
+
+    /** What the project changed since the commit the work started from (see atn/changes). */
+    fun changes() = call { it.changes(JsonObject()) }
+
+    /** What [changes] can compare with: automatic, uncommitted only, recent branches. */
+    fun changeBases() = call { it.changeBases(JsonObject()) }
+
+    /**
+     * Compare with [ref] from now on ("" = automatic, "HEAD" = uncommitted changes only).
+     * Completes exceptionally with the server's reason when [ref] can't be used.
+     */
+    fun setChangesBase(ref: String): CompletableFuture<JsonElement?> =
+        server().thenCompose { s ->
+            s?.setChangesBase(JsonObject().apply { addProperty("ref", ref) }) ?: CompletableFuture.completedFuture(null)
+        }
 
     fun execute(command: String, vararg args: Any): CompletableFuture<Any?> =
         server().thenCompose { s ->

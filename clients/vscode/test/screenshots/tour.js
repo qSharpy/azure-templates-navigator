@@ -116,6 +116,19 @@ const SHOTS = {
     await open('azure-pipelines.yml', null, { line: 0 });
     await sidebarView('pipelinesView');
   } },
+  // My changes: a template parameter renamed (in memory), so the pipelines calling it get new
+  // errors on top of the ones they already had.
+  myChanges: { crop: { w: 0.42, h: 0.6 }, settle: 3000, async setUp() {
+    const editor = await open('templates/run-tests.yml', '- name: testProject');
+    const l = editor.selection.active.line;
+    const c = editor.document.lineAt(l).text.indexOf('testProject') + 'testProject'.length;
+    await editor.edit(e => e.insert(new vscode.Position(l, c), 'Path'));
+    await cmd('azure-templates-navigator.showMyChanges');
+    await sidebarView('pipelinesView');
+  }, async cleanUp() {
+    await cmd('workbench.action.files.revert');
+    await cmd('azure-templates-navigator.showAllPipelines');
+  } },
   // Hover on a template call: its parameters.
   hoverParameters: { crop: { x: 0.05, y: 0.12, w: 0.62, h: 0.62 }, settle: 1500, async setUp() {
     await cmd('workbench.action.closeSidebar');

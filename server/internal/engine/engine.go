@@ -32,6 +32,15 @@ type Settings struct {
 		// `parameters:` block with the template's required parameters.
 		RequiredParameters bool `json:"requiredParameters"`
 	} `json:"completion"`
+	Changes struct {
+		// Enabled: compare the workspace with the commit the work started
+		// from (changes.go) for the Pipelines view and the verdict lens.
+		Enabled bool `json:"enabled"`
+		// DimExistingProblems: publish problems that were already there at
+		// the base as information, so the Problems view's errors and
+		// warnings are the ones the work added (lsp.publish).
+		DimExistingProblems bool `json:"dimExistingProblems"`
+	} `json:"changes"`
 	Repositories repos.Config `json:"repositories"`
 }
 
@@ -42,6 +51,7 @@ func DefaultSettings() Settings {
 	s.Diagnostics.Enabled = true
 	s.Diagnostics.UnusedParameters = true
 	s.Completion.RequiredParameters = true
+	s.Changes.Enabled = true
 	s.Repositories = repos.DefaultConfig()
 	return s
 }
@@ -64,6 +74,34 @@ func ParseSettings(raw json.RawMessage) Settings {
 		s.RequiredParameterColor = "#c92d35"
 	}
 	return s
+}
+
+// unmirrorPaths: in a baseline engine, a relative local path from the
+// project config that leaves the exported repository (../sibling) means the
+// same folder as in the workspace, not one next to the export.
+func (e *Engine) unmirrorPaths(m map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, p := range m {
+		out[k] = p
+		for top, real := range e.mirror {
+			if rel, err := filepath.Rel(top, p); err == nil && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))) {
+				out[k] = filepath.Join(real, rel)
+			}
+		}
+	}
+	return out
+}
+
+// exists reports whether a resolved path is a file. A baseline engine also
+// counts the files it was given as documents (nested checkouts, see
+// changes.go), which have no copy in the export.
+func (e *Engine) exists(p string) bool {
+	if e.mirror != nil {
+		if _, ok := e.overlay[p]; ok {
+			return true
+		}
+	}
+	return fileExists(p)
 }
 
 // ProjectConfigFile is an optional, committable per-repository config file.
@@ -123,6 +161,25 @@ type Engine struct {
 	diagCache   map[string][]Diagnostic
 	diagDirty   map[string]bool // diagnostics that may have changed since ChangedDiagnostics
 	diagAll     bool            // every file's diagnostics may have changed
+	diagGen     int             // increases whenever any diagnostics may have changed
+
+	// Changes (changes.go). Lock order: chMu, then mu; lastMu is a leaf.
+	chMu           sync.Mutex
+	ch             *changeState
+	detachedChoice string // base chosen while HEAD is detached
+	lastMu         sync.Mutex
+	lastCh         *ChangesReport
+	lastSt         *changeState // the state lastCh was computed from (nil when unavailable)
+	baseEng        *Engine
+	// BaselineDir is where base commits are exported ("" = user cache).
+	BaselineDir string
+
+	// A baseline engine indexes an export of a commit. mirror maps each
+	// exported repository top to the real one (for sibling checkouts and
+	// the origin URL), and shared means Repos belongs to the workspace
+	// engine, so settings must not reconfigure it.
+	mirror map[string]string
+	shared bool
 }
 
 // linkSnap records, for a linked file, the parts other files depend on.
@@ -183,8 +240,13 @@ func (e *Engine) SetSettings(s Settings) {
 func (e *Engine) applySettings(s Settings) {
 	e.ideRepos = s.Repositories
 	s.Repositories = mergeProjectConfig(s.Repositories, e.roots)
+	if e.mirror != nil {
+		s.Repositories.LocalPaths = e.unmirrorPaths(s.Repositories.LocalPaths)
+	}
 	e.settings = s
-	e.Repos.SetConfig(s.Repositories)
+	if !e.shared {
+		e.Repos.SetConfig(s.Repositories)
+	}
 }
 
 // mergeProjectConfig layers .azure-templates-navigator.json (committed in the
@@ -321,6 +383,12 @@ func (e *Engine) Invalidate() {
 		}
 	}
 	e.mu.Unlock()
+	e.lastMu.Lock()
+	b := e.baseEng
+	e.lastMu.Unlock()
+	if b != nil {
+		b.Invalidate()
+	}
 }
 
 // Rescan rebuilds the workspace file list from disk.
@@ -500,6 +568,7 @@ func (e *Engine) fullLink() {
 	e.aliasFrom = map[string]string{}
 	e.diagCache = map[string][]Diagnostic{}
 	e.diagAll = true
+	e.diagGen++
 	e.dirty = map[string]bool{}
 	e.forward = map[string][]edge{}
 	e.reverse = map[string]map[string]bool{}
@@ -629,6 +698,7 @@ func (e *Engine) invalidateWithAncestors(p string) {
 }
 
 func (e *Engine) invalidateDiag(p string) {
+	e.diagGen++
 	delete(e.diagCache, p)
 	e.diagDirty[p] = true
 }

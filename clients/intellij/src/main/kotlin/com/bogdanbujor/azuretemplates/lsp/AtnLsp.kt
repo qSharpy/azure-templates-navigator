@@ -61,6 +61,15 @@ interface AtnLanguageServer : LanguageServer {
 
     @JsonRequest("atn/pipelineCheck")
     fun pipelineCheck(params: JsonObject): CompletableFuture<JsonElement?>
+
+    @JsonRequest("atn/changes")
+    fun changes(params: JsonObject): CompletableFuture<JsonElement?>
+
+    @JsonRequest("atn/changeBases")
+    fun changeBases(params: JsonObject): CompletableFuture<JsonElement?>
+
+    @JsonRequest("atn/setChangesBase")
+    fun setChangesBase(params: JsonObject): CompletableFuture<JsonElement?>
 }
 
 class AtnServerFactory : LanguageServerFactory {

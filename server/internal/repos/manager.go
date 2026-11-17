@@ -216,7 +216,14 @@ func CacheDirFor(cacheRoot, cloneURL, ref string) string {
 // When the repository is not available and autoFetch is enabled a background
 // fetch is started; OnChange fires when it completes.
 func (m *Manager) Locate(decl pipeline.RepoDecl, searchParents []string, workspaceRemote string) Location {
-	cfg := m.Config()
+	return m.LocateIn(m.Config(), decl, searchParents, workspaceRemote)
+}
+
+// LocateIn is Locate with another configuration (local paths, URLs) but this
+// manager's cache and fetch state. The comparison with a base commit uses it:
+// that commit's project config may map repositories differently.
+func (m *Manager) LocateIn(cfg Config, decl pipeline.RepoDecl, searchParents []string, workspaceRemote string) Location {
+	cfg = normalise(cfg)
 
 	for _, k := range []string{decl.Alias, decl.Name, decl.RepoName()} {
 		if p, ok := cfg.LocalPaths[k]; ok && p != "" {

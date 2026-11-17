@@ -3,6 +3,20 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [2.8.0] — 2026-11-17
+
+### Added
+
+- **What did my changes break?** The Pipelines view (VS Code) and tab (IntelliJ) have a second view, *My changes*. It compares the workspace with the commit your work started from, and lists only the pipelines your changes reach. For each one it shows the problems your changes added, the ones they fixed, and how many were already there. Commits you have pushed count as your work too, along with uncommitted edits and unsaved editors. A problem that only moved lines is not new. A problem in a template that several pipelines use counts once.
+  - **Where your work started:** on the default branch, your unpushed commits. On a branch created from another branch, where it splits from that branch, even after a rebase. Otherwise, where it splits from the default branch. The first row shows the base; click it to choose *uncommitted changes only*, a branch or a commit. The choice is stored per branch in `git config`.
+  - **The big picture stays visible:** a row with how many pipelines fail in total, the *new* marks in the full list, and *+2 new since feature/story* on the verdict above each pipeline.
+  - The files you changed come first, under the row that says where your work started.
+  - The **Diagnostics** view (tab) has the same switch, shared with the Pipelines view: in My changes it lists only the problems your changes added.
+  - **Quiet the Problems panel:** with `changes.dimExistingProblems` (off by default), errors and warnings that were already there before your changes show as information, ending with *(already there at origin/main)*. Verdicts, views and the CLI keep the real severities.
+  - A *What did my changes break?* tip in Get Started (VS Code) and Tip of the Day (IntelliJ).
+  - Setting: `changes.enabled` (on by default).
+- **`atn check --since REF`** reports, and fails on, only the problems that are new since a branch, commit, `HEAD` or `auto`. A repository can gate pull requests on adding no new problems before the existing ones are fixed. It exits with 2 when `REF` is missing or shares no history with `HEAD` (a shallow checkout), instead of comparing with the wrong commit.
+
 ## [2.7.0] — 2026-11-17
 
 ### Added

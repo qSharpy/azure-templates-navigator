@@ -1,7 +1,7 @@
 'use strict';
 
 // Tree views. They render view models produced by the language server
-// (atn/dependencyTree, atn/workspaceDiagnostics, atn/pipelineCheck, atn/repositories, atn/stats), so labels,
+// (atn/dependencyTree, atn/workspaceDiagnostics, atn/pipelineCheck, atn/changes, atn/repositories, atn/stats), so labels,
 // descriptions and tooltips are identical to the IntelliJ plugin.
 
 const vscode = require('vscode');
@@ -88,24 +88,65 @@ class DependencyTreeProvider extends Base {
 
 // ── Diagnostics ───────────────────────────────────────────────────────────
 class DiagnosticsTreeProvider extends Base {
-  constructor(request) {
+  // mode: 'all' (every problem) or 'changes' (only the ones your work added),
+  // shared with the Pipelines view.
+  constructor(request, mode = 'all') {
     super(request);
+    this.mode = mode;
     this.onCounts = () => {};
+  }
+
+  setMode(mode) {
+    this.mode = mode;
+    this.refresh();
   }
 
   async getChildren(element) {
     if (element) return element.children;
+    if (this.mode === 'changes') return this.changes();
     const files = (await this.request('atn/workspaceDiagnostics')) || [];
     let errors = 0, warnings = 0;
     const out = files.map(f => {
       errors += f.errors; warnings += f.warnings;
       return { file: f, children: f.diagnostics.map(d => ({ diag: d, file: f })) };
     });
-    this.onCounts(errors, warnings);
+    this.onCounts({ errors, warnings });
     return out;
   }
 
+  async changes() {
+    const c = await this.request('atn/workspaceDiagnostics', { onlyNew: true });
+    if (!c || !c.available) {
+      this.onCounts({ mode: 'changes', errors: 0, warnings: 0 });
+      return [{ message: (c && c.reason) || 'The language server is not running', tooltip: 'Changes are compared with a git commit: open a folder that is a git repository.' }];
+    }
+    this.onCounts({ mode: 'changes', label: c.label, errors: c.newErrors, warnings: c.newWarnings });
+    const rows = [{
+      base: true,
+      label: `Since ${c.label}`,
+      description: c.existing ? `${c.existing} already there, hidden` : '',
+      tooltip: `Only the problems your changes added since ${c.label}. ${c.existing} problem(s) that were already there are hidden: *Show Everything* in the title shows them.\n\nClick to compare with another branch or commit.`,
+    }];
+    if (!c.files.length) rows.push({ message: 'No new problems', icon: 'pass' });
+    for (const f of c.files) rows.push({ file: f, children: f.diagnostics.map(d => ({ diag: d, file: f })) });
+    return rows;
+  }
+
   getTreeItem(el) {
+    if (el.message) {
+      const item = new vscode.TreeItem(el.message, vscode.TreeItemCollapsibleState.None);
+      item.iconPath = new vscode.ThemeIcon(el.icon || 'info', el.icon === 'pass' ? new vscode.ThemeColor('testing.iconPassed') : undefined);
+      item.tooltip = el.tooltip;
+      return item;
+    }
+    if (el.base) {
+      const item = new vscode.TreeItem(el.label, vscode.TreeItemCollapsibleState.None);
+      item.description = el.description;
+      item.tooltip = el.tooltip;
+      item.iconPath = new vscode.ThemeIcon('git-compare');
+      item.command = { command: 'azure-templates-navigator.chooseChangesBase', title: 'Compare with…' };
+      return item;
+    }
     if (el.diag) {
       const d = el.diag;
       const item = new vscode.TreeItem(d.message, vscode.TreeItemCollapsibleState.None);
@@ -196,56 +237,179 @@ class RepositoriesTreeProvider extends Base {
 }
 
 // ── Pipelines ─────────────────────────────────────────────────────────────
-// Every root pipeline with its verdict (atn/pipelineCheck without a uri),
-// failing first; expand one for its problems, in it and in its templates.
+// Two modes, switched from the view title:
+//  - all: every root pipeline with its verdict (atn/pipelineCheck without a
+//    uri), failing first; problems your work added are marked "new".
+//  - changes: what your work changed since where it started (atn/changes):
+//    the pipelines it reaches, each with its new and fixed problems, and the
+//    files you changed. The first row names the base; click it to change it.
 const VERDICT_ICON = {
   fail: ['error', 'list.errorForeground'],
   warn: ['warning', 'list.warningForeground'],
   ok: ['pass', 'testing.iconPassed'],
 };
+const FILE_ICON = { added: 'diff-added', modified: 'diff-modified', deleted: 'diff-removed' };
+
+function verdictIcon(verdict) {
+  const [id, color] = VERDICT_ICON[verdict] || ['circle-slash', 'disabledForeground'];
+  return new vscode.ThemeIcon(id, new vscode.ThemeColor(color));
+}
+
+function problemItem(p, { fixed = false } = {}) {
+  const line = p.range.start.line + 1;
+  const item = new vscode.TreeItem(p.message, vscode.TreeItemCollapsibleState.None);
+  item.description = `${p.new ? 'new · ' : ''}${p.relativePath}:${line}`;
+  item.tooltip = `${p.message}\n${p.relativePath}:${line} [${p.code}]${fixed ? '\nFixed: it was there at the base, it is gone now' : p.new ? '\nNew: your changes added it' : ''}`;
+  item.iconPath = fixed
+    ? new vscode.ThemeIcon('pass', new vscode.ThemeColor('testing.iconPassed'))
+    : new vscode.ThemeIcon(p.severity === 1 ? 'error' : 'warning',
+      new vscode.ThemeColor(p.severity === 1 ? 'list.errorForeground' : 'list.warningForeground'));
+  item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Go to problem', arguments: [{ filePath: p.filePath, line: p.range.start.line }] };
+  return item;
+}
 
 class PipelinesTreeProvider extends Base {
-  constructor(request) {
+  constructor(request, mode = 'all') {
     super(request);
+    this.mode = mode;
     this.onSummary = () => {};
+  }
+
+  setMode(mode) {
+    if (this.mode === mode) return;
+    this.mode = mode;
+    this.refresh();
   }
 
   async getChildren(element) {
     if (element) return element.children || [];
+    return this.mode === 'changes' ? this.changes() : this.all();
+  }
+
+  async all() {
     const reports = await this.request('atn/pipelineCheck', {});
     if (!reports) {
-      this.onSummary(null);
+      this.onSummary({ mode: 'all', reports: null });
       return [{ message: 'Diagnostics are turned off', tooltip: 'Turn on azure-templates-navigator.diagnostics.enabled to check pipelines' }];
     }
-    this.onSummary(reports);
+    this.onSummary({ mode: 'all', reports });
     return reports.map(r => ({ report: r, children: r.problems.map(p => ({ problem: p })) }));
   }
 
+  async changes() {
+    const c = await this.request('atn/changes', {});
+    this.onSummary({ mode: 'changes', changes: c });
+    if (!c) return [{ message: 'The language server is not running' }];
+    if (!c.available) {
+      return [{ message: c.reason || 'Nothing to compare with', tooltip: 'Changes are compared with a git commit: open a folder that is a git repository.' }];
+    }
+    const base = c.bases[0] || {};
+    const rows = [{
+      base: true,
+      label: `Since ${c.label}`,
+      description: base.commits ? `${base.commits} commit${base.commits === 1 ? '' : 's'} + uncommitted` : base.ref === 'HEAD' ? '' : 'uncommitted',
+      tooltip: c.bases.map(b => `${b.repo}: ${b.detail}${b.error ? `\n⚠ ${b.error}` : ''}`).join('\n') + '\n\nClick to compare with another branch or commit.',
+      warn: c.bases.some(b => b.error),
+    }];
+    // what you changed first, then what it did to the pipelines
+    if (c.files.length) {
+      rows.push({
+        section: true, label: `Files changed (${c.files.length})`, icon: 'files', expanded: true,
+        children: c.files.map(f => ({ file: f, children: [...f.new.map(x => ({ problem: x })), ...f.fixed.map(x => ({ problem: x, fixed: true }))] })),
+      });
+    }
+    rows.push({
+      summary: true,
+      label: c.summary,
+      newErrors: c.newErrors,
+      tooltip: `What your changes did to the pipelines below.\n\nIn total, ${c.allFailing} of ${c.allPipelines} pipelines fail when queued, counting problems that were there before your changes. Click to see every pipeline.`,
+      description: `${c.allFailing} of ${c.allPipelines} fail in total`,
+    });
+    for (const p of c.pipelines) {
+      const children = [];
+      if (p.new.length) children.push({ section: true, label: `New (${p.new.length})`, icon: 'diff-added', expanded: true, children: p.new.map(x => ({ problem: x })) });
+      if (p.fixed.length) children.push({ section: true, label: `Fixed (${p.fixed.length})`, icon: 'pass', children: p.fixed.map(x => ({ problem: x, fixed: true })) });
+      if (p.changed.length) children.push({ section: true, label: `Files you changed that it uses (${p.changed.length})`, icon: 'git-compare', children: p.changed.map(rel => ({ rel })) });
+      rows.push({ change: p, children });
+    }
+    return rows;
+  }
+
   getTreeItem(el) {
+    const None = vscode.TreeItemCollapsibleState.None;
     if (el.message) {
-      const item = new vscode.TreeItem(el.message, vscode.TreeItemCollapsibleState.None);
+      const item = new vscode.TreeItem(el.message, None);
       item.iconPath = new vscode.ThemeIcon('info');
       item.tooltip = el.tooltip;
       return item;
     }
-    if (el.problem) {
-      const p = el.problem;
-      const item = new vscode.TreeItem(p.message, vscode.TreeItemCollapsibleState.None);
-      item.description = `${p.relativePath}:${p.range.start.line + 1}`;
-      item.tooltip = `${p.message}\n${p.relativePath}:${p.range.start.line + 1} [${p.code}]`;
-      item.iconPath = new vscode.ThemeIcon(p.severity === 1 ? 'error' : 'warning',
-        new vscode.ThemeColor(p.severity === 1 ? 'list.errorForeground' : 'list.warningForeground'));
-      item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Go to problem', arguments: [{ filePath: p.filePath, line: p.range.start.line }] };
+    if (el.base) {
+      const item = new vscode.TreeItem(el.label, None);
+      item.description = el.description;
+      item.tooltip = el.tooltip;
+      item.iconPath = new vscode.ThemeIcon('git-compare', el.warn ? new vscode.ThemeColor('list.warningForeground') : undefined);
+      item.command = { command: 'azure-templates-navigator.chooseChangesBase', title: 'Compare with…' };
+      item.contextValue = 'changesBase';
+      return item;
+    }
+    if (el.summary) {
+      const item = new vscode.TreeItem(el.label, None);
+      item.description = el.description;
+      item.tooltip = el.tooltip;
+      item.iconPath = el.newErrors ? new vscode.ThemeIcon('error', new vscode.ThemeColor('list.errorForeground'))
+        : new vscode.ThemeIcon('pass', new vscode.ThemeColor('testing.iconPassed'));
+      item.command = { command: 'azure-templates-navigator.showAllPipelines', title: 'Show all pipelines' };
+      return item;
+    }
+    if (el.section) {
+      const item = new vscode.TreeItem(el.label, el.expanded ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.Collapsed);
+      item.iconPath = new vscode.ThemeIcon(el.icon);
+      return item;
+    }
+    if (el.rel) {
+      const item = new vscode.TreeItem(el.rel, None);
+      item.iconPath = new vscode.ThemeIcon('file');
+      return item;
+    }
+    if (el.problem) return problemItem(el.problem, { fixed: el.fixed });
+    if (el.file) {
+      const f = el.file;
+      const item = new vscode.TreeItem(f.relativePath, el.children.length ? vscode.TreeItemCollapsibleState.Collapsed : None);
+      const parts = [f.status];
+      if (f.pipelines) parts.push(`${f.pipelines} pipeline${f.pipelines === 1 ? '' : 's'} use it`);
+      if (f.new.length) parts.push(`+${f.new.length} new`);
+      if (f.fixed.length) parts.push(`${f.fixed.length} fixed`);
+      item.description = parts.join(' · ');
+      item.iconPath = new vscode.ThemeIcon(FILE_ICON[f.status] || 'file');
+      if (f.status !== 'deleted') {
+        item.resourceUri = vscode.Uri.file(f.filePath);
+        item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: f.filePath }] };
+      }
+      return item;
+    }
+    if (el.change) {
+      const p = el.change;
+      const item = new vscode.TreeItem(p.relativePath, el.children.length ? vscode.TreeItemCollapsibleState.Collapsed : None);
+      item.id = `change:${p.filePath}`;
+      item.description = p.title;
+      const before = p.before.exists ? `${p.before.errors} error(s), ${p.before.warnings} warning(s)` : 'did not exist';
+      const now = p.now.exists ? `${p.now.errors} error(s), ${p.now.warnings} warning(s)` : 'removed';
+      item.tooltip = `${p.relativePath}\nBefore: ${before}\nNow: ${now}`;
+      item.iconPath = verdictIcon(p.now.verdict);
+      if (p.now.exists) {
+        item.resourceUri = vscode.Uri.file(p.filePath);
+        item.contextValue = 'pipeline';
+        item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: p.filePath }] };
+      }
       return item;
     }
     const r = el.report;
     const item = new vscode.TreeItem(r.relativePath, r.problems.length
       ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None);
     item.id = `pipeline:${r.filePath}`;
-    item.description = r.title.replace(/^\S+ /, '');
-    item.tooltip = `${r.relativePath}\n${r.title}\n${r.templates} template(s) checked`;
-    const [id, color] = VERDICT_ICON[r.verdict] || VERDICT_ICON.ok;
-    item.iconPath = new vscode.ThemeIcon(id, new vscode.ThemeColor(color));
+    item.description = r.title.replace(/^\S+ /, '') + (r.change && r.change.new ? ` · +${r.change.new} new` : '');
+    item.tooltip = `${r.relativePath}\n${r.title}\n${r.templates} template(s) checked` + (r.change ? `\nYour changes: ${r.change.title}` : '');
+    item.iconPath = verdictIcon(r.verdict);
     item.resourceUri = vscode.Uri.file(r.filePath);
     item.contextValue = 'pipeline';
     item.command = { command: 'azure-templates-navigator.openTemplate', title: 'Open', arguments: [{ filePath: r.filePath }] };

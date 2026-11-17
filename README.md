@@ -206,7 +206,7 @@ Click a row to open the file (at the problem or reference, where there is one); 
 The same binary validates pipelines in a terminal or in CI:
 
 ```bash
-atn check [--root DIR] [--format text|json|azure] [--strict] [--no-fetch] [--config FILE] [files…]
+atn check [--root DIR] [--format text|json|azure] [--strict] [--no-fetch] [--since REF] [--config FILE] [files…]
 atn fetch [--root DIR]          # download every referenced repository
 atn repos [--root DIR]          # show how each alias resolves
 atn version
@@ -222,6 +222,29 @@ Pipelines:
 
 A pipeline passed as a file is checked together with every template it uses, wherever they live (`atn check azure-pipelines.yml`).
 
+`--since REF` reports only the problems that are new since `REF`, and exits with 1 only on those. A repository that already has
+problems can then gate its pull requests on not adding more. `REF` is one of:
+
+- a branch: compared with where `HEAD` splits from it;
+- a commit;
+- `HEAD`: uncommitted changes only;
+- `auto`: where this branch started, as in the IDEs.
+
+```
+$ atn check --since origin/main
+azure-pipelines.yml:42:13: error: Missing required parameter 'testProjectPath' (type: string) for template 'templates/run-tests.yml' [missing-required-param]
+
+Since origin/main @ 3d0053a: 1 file changed · 2 pipelines affected · 4 new errors, 1 new warning
+All pipelines: 8 of 11 fail when queued
+
+Pipelines your changes reach:
+  ✗ azure-pipelines.yml                  +4 new · 5 already there
+  ✗ pipelines/microservice-pipeline.yml  +4 new · 2 already there
+```
+
+It needs the history back to `REF`. Azure Pipelines checks out shallow by default, so set `fetchDepth: 0` on the checkout.
+When `REF` can't be found, or shares no commit with `HEAD`, `check` exits with 2 instead of comparing with the wrong commit.
+
 To get annotations in an Azure Pipelines run, add these steps:
 
 ```yaml
@@ -229,6 +252,17 @@ To get annotations in an Azure Pipelines run, add these steps:
     curl -sSL -o atn https://github.com/qSharpy/azure-templates-navigator/releases/latest/download/atn-linux-x64
     chmod +x atn && ./atn check --format azure
   displayName: Validate pipeline templates
+```
+
+On pull requests, to fail only on what the pull request adds:
+
+```yaml
+- checkout: self
+  fetchDepth: 0
+- script: |
+    target='$(System.PullRequest.TargetBranch)'   # refs/heads/main
+    ./atn check --format azure --since "origin/${target#refs/heads/}"
+  displayName: No new pipeline problems
 ```
 
 The download URL assumes the binaries from `dist/release/` are attached to a GitHub release of the repo you publish this from.

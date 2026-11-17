@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -395,5 +396,182 @@ func TestDiagnosticsResentOnOpen(t *testing.T) {
 			}
 		}
 		_ = cl.c.notify("textDocument/didClose", map[string]interface{}{"textDocument": map[string]interface{}{"uri": uri}})
+	}
+}
+
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+}
+
+// atn/changes, the "new" marks in atn/pipelineCheck, the lens note and
+// choosing the base.
+func TestChangesRequests(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	t.Setenv("ATN_BASELINE_DIR", t.TempDir())
+	root := t.TempDir()
+	_ = os.WriteFile(filepath.Join(root, "t.yml"), []byte("parameters:\n  - name: a\n    type: string\nsteps:\n  - script: echo ${{ parameters.a }}\n"), 0o644)
+	pipe := "trigger: none\nsteps:\n  - template: t.yml\n    parameters:\n      a: x\n"
+	pipePath := filepath.Join(root, "p.yml")
+	_ = os.WriteFile(pipePath, []byte(pipe), 0o644)
+	gitRun(t, root, "init", "-q", "-b", "main")
+	gitRun(t, root, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "add", "-A")
+	gitRun(t, root, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "start")
+	gitRun(t, root, "switch", "-q", "-c", "mywork")
+
+	cl := startServer(t)
+	cl.call("initialize", map[string]interface{}{
+		"rootUri": pathToURI(root),
+		"capabilities": map[string]interface{}{"workspace": map[string]interface{}{
+			"codeLens": map[string]interface{}{"refreshSupport": true},
+		}},
+		"initializationOptions": map[string]interface{}{
+			"settings": map[string]interface{}{"repositories": map[string]interface{}{"autoFetch": false}},
+			"client":   map[string]interface{}{"commandPrefix": "x."},
+		},
+	}, nil)
+	_ = cl.c.notify("initialized", map[string]interface{}{})
+	cl.waitNote("workspace/codeLens/refresh", nil)
+
+	uri := pathToURI(pipePath)
+	_ = cl.c.notify("textDocument/didOpen", map[string]interface{}{"textDocument": map[string]interface{}{
+		"uri": uri, "languageId": "yaml", "version": 1, "text": pipe + "      b: y\n"}})
+	cl.waitNote("atn/didChange", nil)
+
+	var ch struct {
+		Available bool
+		Label     string
+		Summary   string
+		NewErrors int
+		Pipelines []struct {
+			URI    string
+			Status string
+			Title  string
+			New    []struct{ Code string }
+		}
+		Files []struct{ RelativePath, Status string }
+	}
+	cl.call("atn/changes", map[string]string{}, &ch)
+	if !ch.Available || ch.Label == "" || ch.NewErrors != 1 || len(ch.Pipelines) != 1 || ch.Pipelines[0].URI != uri ||
+		len(ch.Pipelines[0].New) != 1 || ch.Pipelines[0].New[0].Code != "unknown-param" || len(ch.Files) != 1 || ch.Files[0].Status != "modified" {
+		t.Fatalf("changes %+v", ch)
+	}
+
+	var all []struct {
+		Change   *struct{ New int }
+		Problems []struct{ New bool }
+	}
+	cl.call("atn/pipelineCheck", map[string]string{}, &all)
+	if len(all) != 1 || all[0].Change == nil || all[0].Change.New != 1 || len(all[0].Problems) != 1 || !all[0].Problems[0].New {
+		t.Fatalf("pipelineCheck %+v", all)
+	}
+
+	var lenses []struct{ Command struct{ Title string } }
+	cl.call("textDocument/codeLens", map[string]interface{}{"textDocument": map[string]string{"uri": uri}}, &lenses)
+	if len(lenses) != 1 || !strings.HasSuffix(lenses[0].Command.Title, " · +1 new since main") {
+		t.Fatalf("lens %+v", lenses)
+	}
+
+	var bases []struct {
+		Ref    string
+		Picked bool
+	}
+	cl.call("atn/changeBases", map[string]string{}, &bases)
+	if len(bases) < 3 || bases[0].Ref != "" || !bases[0].Picked || bases[1].Ref != "HEAD" {
+		t.Fatalf("bases %+v", bases)
+	}
+	cl.call("atn/setChangesBase", map[string]string{"ref": "HEAD"}, &ch)
+	if len(ch.Pipelines) != 1 || !strings.HasPrefix(ch.Label, "uncommitted") {
+		t.Fatalf("after choosing HEAD %+v", ch)
+	}
+	cl.id++
+	_ = cl.c.request(cl.id, "atn/setChangesBase", map[string]string{"ref": "no-such-ref"})
+	if m := <-cl.in; m.Error == nil {
+		t.Fatal("an unknown ref must be refused")
+	}
+}
+
+// changes.dimExistingProblems: a problem that was there at the base is sent
+// as information, the one the work added keeps its severity. The
+// Diagnostics view's My changes mode lists only the new one.
+func TestDimExistingProblems(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	t.Setenv("ATN_BASELINE_DIR", t.TempDir())
+	root := t.TempDir()
+	_ = os.WriteFile(filepath.Join(root, "t.yml"), []byte("parameters:\n  - name: a\n    type: string\nsteps:\n  - script: echo ${{ parameters.a }}\n"), 0o644)
+	pipe := "trigger: none\nsteps:\n  - template: t.yml\n    parameters:\n      a: x\n      b: y\n"
+	pipePath := filepath.Join(root, "p.yml")
+	_ = os.WriteFile(pipePath, []byte(pipe), 0o644)
+	gitRun(t, root, "init", "-q", "-b", "main")
+	gitRun(t, root, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "add", "-A")
+	gitRun(t, root, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "start")
+	gitRun(t, root, "switch", "-q", "-c", "mywork")
+
+	cl := startServer(t)
+	cl.call("initialize", map[string]interface{}{
+		"rootUri": pathToURI(root),
+		"initializationOptions": map[string]interface{}{"settings": map[string]interface{}{
+			"repositories": map[string]interface{}{"autoFetch": false},
+			"changes":      map[string]interface{}{"enabled": true, "dimExistingProblems": true},
+		}},
+	}, nil)
+	_ = cl.c.notify("initialized", map[string]interface{}{})
+	_ = cl.c.notify("textDocument/didOpen", map[string]interface{}{"textDocument": map[string]interface{}{
+		"uri": pathToURI(pipePath), "languageId": "yaml", "version": 1, "text": pipe + "      c: z\n"}})
+
+	m := cl.waitNote("textDocument/publishDiagnostics", func(m *message) bool {
+		return strings.Contains(string(m.Params), "p.yml") && strings.Contains(string(m.Params), "already there at main")
+	})
+	var p struct {
+		Diagnostics []struct {
+			Severity int
+			Message  string
+		}
+	}
+	_ = json.Unmarshal(m.Params, &p)
+	got := map[string]int{}
+	for _, d := range p.Diagnostics {
+		switch {
+		case strings.Contains(d.Message, "'b'"):
+			got["b"] = d.Severity
+			if !strings.HasSuffix(d.Message, "(already there at main)") {
+				t.Errorf("message %q", d.Message)
+			}
+		case strings.Contains(d.Message, "'c'"):
+			got["c"] = d.Severity
+		}
+	}
+	if got["b"] != 3 || got["c"] != 1 {
+		t.Fatalf("severities %v in %s", got, m.Params)
+	}
+
+	// the Diagnostics view's My changes mode: only c
+	var only struct {
+		Available bool
+		Label     string
+		Existing  int
+		NewErrors int
+		Files     []struct {
+			RelativePath string
+			Diagnostics  []struct{ Message string }
+		}
+	}
+	cl.call("atn/workspaceDiagnostics", map[string]bool{"onlyNew": true}, &only)
+	if !only.Available || only.Label == "" || only.Existing != 1 || only.NewErrors != 1 || len(only.Files) != 1 ||
+		len(only.Files[0].Diagnostics) != 1 || !strings.Contains(only.Files[0].Diagnostics[0].Message, "'c'") {
+		t.Fatalf("onlyNew %+v", only)
+	}
+	var all []struct{ Diagnostics []struct{ Message string } }
+	cl.call("atn/workspaceDiagnostics", map[string]bool{}, &all)
+	if len(all) != 1 || len(all[0].Diagnostics) != 2 {
+		t.Fatalf("all %+v", all)
 	}
 }

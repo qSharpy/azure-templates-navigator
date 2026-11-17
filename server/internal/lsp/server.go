@@ -27,6 +27,7 @@ type Server struct {
 	mu       sync.Mutex
 	timer    *time.Timer
 	pubHash  map[string]string // path -> hash of last published diagnostics
+	dimID    string            // the base existing problems were dimmed against (redim)
 	reqID    int
 	shutdown bool
 	watchReg bool
@@ -302,7 +303,15 @@ func (s *Server) handle(m *message) {
 		}
 		result = s.eng.BuildGraph(req)
 	case "atn/workspaceDiagnostics":
-		result = s.workspaceDiagnostics()
+		var p struct {
+			OnlyNew bool `json:"onlyNew"`
+		}
+		_ = json.Unmarshal(m.Params, &p)
+		if p.OnlyNew {
+			result = s.newDiagnostics()
+		} else {
+			result = s.workspaceDiagnostics()
+		}
 	case "atn/pipelineCheck":
 		var p struct {
 			URI string `json:"uri"`
@@ -325,6 +334,12 @@ func (s *Server) handle(m *message) {
 		result = map[string]interface{}{"filePath": file, "parameters": list}
 	case "atn/repositories":
 		result = s.eng.Repositories()
+	case "atn/changes":
+		result = s.changes()
+	case "atn/changeBases":
+		result = s.eng.ChangeBases()
+	case "atn/setChangesBase":
+		result, rerr = s.setChangesBase(m.Params)
 	case "atn/stats":
 		result = s.eng.Stats()
 	case "atn/references":
@@ -567,39 +582,98 @@ func (s *Server) publish() {
 	sort.Strings(paths)
 	changed := false
 	for _, p := range paths {
-		ds := all[p]
-		lds := make([]lspDiagnostic, 0, len(ds))
-		for _, d := range ds {
-			lds = append(lds, s.toLSPDiag(p, d))
-		}
-		b, _ := json.Marshal(lds)
-		h := fmt.Sprintf("%x", sha1.Sum(b))
-		s.mu.Lock()
-		prev, seen := s.pubHash[p]
-		if (seen && prev == h && !reopened[p]) || (!seen && len(lds) == 0) {
-			s.mu.Unlock()
-			continue
-		}
-		if len(lds) == 0 {
-			delete(s.pubHash, p) // nothing shown any more
-		} else {
-			s.pubHash[p] = h
-		}
-		s.mu.Unlock()
-		// A re-sent file whose diagnostics didn't change doesn't change the
-		// views or verdicts, so it must not trigger atn/didChange.
-		if !seen || prev != h {
+		if s.send(p, all[p], reopened[p]) {
 			changed = true
 		}
-		_ = s.c.notify("textDocument/publishDiagnostics", map[string]interface{}{"uri": pathToURI(p), "diagnostics": lds})
 	}
 	if changed || delta.Version != s.pubVersion {
 		s.pubVersion = delta.Version
+		// compare with the base before the views reload, so they show
+		// what's new (a no-op outside git or when changes are off)
+		s.eng.Changes()
+		s.redim()
 		_ = s.c.notify("atn/didChange", map[string]interface{}{"reason": "index"})
 		if s.lensRefresh {
 			// pipeline verdicts depend on templates in other files
 			s.clientRequest("workspace/codeLens/refresh", nil)
 		}
+	}
+}
+
+// send publishes one file's diagnostics unless they are what the client
+// already has (always when force: a re-opened file). It reports whether
+// they changed. The caller holds pubMu.
+func (s *Server) send(p string, ds []engine.Diagnostic, force bool) bool {
+	ds = s.dim(p, ds)
+	lds := make([]lspDiagnostic, 0, len(ds))
+	for _, d := range ds {
+		lds = append(lds, s.toLSPDiag(p, d))
+	}
+	b, _ := json.Marshal(lds)
+	h := fmt.Sprintf("%x", sha1.Sum(b))
+	s.mu.Lock()
+	prev, seen := s.pubHash[p]
+	if (seen && prev == h && !force) || (!seen && len(lds) == 0) {
+		s.mu.Unlock()
+		return false
+	}
+	if len(lds) == 0 {
+		delete(s.pubHash, p) // nothing shown any more
+	} else {
+		s.pubHash[p] = h
+	}
+	s.mu.Unlock()
+	_ = s.c.notify("textDocument/publishDiagnostics", map[string]interface{}{"uri": pathToURI(p), "diagnostics": lds})
+	// A re-sent file whose diagnostics didn't change doesn't change the
+	// views or verdicts, so it must not trigger atn/didChange.
+	return !seen || prev != h
+}
+
+// dim lowers the errors and warnings that were already there at the base
+// to information when changes.dimExistingProblems is on, so the Problems
+// view's errors and warnings are the ones your work added. Verdicts, views
+// and the CLI keep the real severities.
+func (s *Server) dim(p string, ds []engine.Diagnostic) []engine.Diagnostic {
+	if !s.eng.Settings().Changes.DimExistingProblems {
+		return ds
+	}
+	marks, base := s.eng.Existing(p, ds)
+	if marks == nil {
+		return ds
+	}
+	out := make([]engine.Diagnostic, len(ds))
+	copy(out, ds)
+	for i := range out {
+		if marks[i] {
+			out[i].Severity = engine.SevInfo
+			out[i].Message += " (already there at " + base + ")"
+		}
+	}
+	return out
+}
+
+// redim re-sends every file with diagnostics when the base they were
+// dimmed against changed (a new base, the first comparison, the setting
+// turned off). The caller holds pubMu.
+func (s *Server) redim() {
+	id := ""
+	if s.eng.Settings().Changes.DimExistingProblems {
+		id = s.eng.ExistingID()
+	}
+	s.mu.Lock()
+	same := id == s.dimID
+	s.dimID = id
+	paths := make([]string, 0, len(s.pubHash))
+	for p := range s.pubHash {
+		paths = append(paths, p)
+	}
+	s.mu.Unlock()
+	if same {
+		return
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		s.send(p, s.eng.Diagnose(p), false)
 	}
 }
 
@@ -612,31 +686,82 @@ func (s *Server) clientRequest(method string, params interface{}) {
 	_ = s.c.request(id, method, params)
 }
 
+// wsItem and wsFile are atn/workspaceDiagnostics' rows.
+type wsItem struct {
+	Line     int    `json:"line"`
+	Col      int    `json:"col"`
+	Severity int    `json:"severity"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+}
+
+type wsFile struct {
+	FilePath     string   `json:"filePath"`
+	URI          string   `json:"uri"`
+	RelativePath string   `json:"relativePath"`
+	Errors       int      `json:"errors"`
+	Warnings     int      `json:"warnings"`
+	Diagnostics  []wsItem `json:"diagnostics"`
+}
+
+// workspaceDiagnostics answers atn/workspaceDiagnostics: every file's
+// errors and warnings, most errors first.
 func (s *Server) workspaceDiagnostics() interface{} {
-	type item struct {
-		Line     int    `json:"line"`
-		Col      int    `json:"col"`
-		Severity int    `json:"severity"`
-		Code     string `json:"code"`
-		Message  string `json:"message"`
-	}
-	type file struct {
-		FilePath     string `json:"filePath"`
-		URI          string `json:"uri"`
-		RelativePath string `json:"relativePath"`
-		Errors       int    `json:"errors"`
-		Warnings     int    `json:"warnings"`
-		Diagnostics  []item `json:"diagnostics"`
-	}
-	out := []file{}
+	out := []wsFile{}
 	for _, fd := range s.eng.WorkspaceDiagnostics() {
-		f := file{FilePath: fd.FilePath, URI: pathToURI(fd.FilePath), RelativePath: fd.RelativePath, Errors: fd.Errors, Warnings: fd.Warnings}
+		f := wsFile{FilePath: fd.FilePath, URI: pathToURI(fd.FilePath), RelativePath: fd.RelativePath, Errors: fd.Errors, Warnings: fd.Warnings}
 		for _, d := range fd.Diagnostics {
-			f.Diagnostics = append(f.Diagnostics, item{Line: d.Line, Col: byteToUTF16(s.eng.LineText(fd.FilePath, d.Line), d.StartCol),
-				Severity: d.Severity, Code: d.Code, Message: d.Message})
+			f.Diagnostics = append(f.Diagnostics, s.wsItem(fd.FilePath, d))
 		}
 		out = append(out, f)
 	}
+	return out
+}
+
+func (s *Server) wsItem(path string, d engine.Diagnostic) wsItem {
+	return wsItem{Line: d.Line, Col: byteToUTF16(s.eng.LineText(path, d.Line), d.StartCol), Severity: d.Severity, Code: d.Code, Message: d.Message}
+}
+
+// newDiagnostics answers atn/workspaceDiagnostics {onlyNew: true}, the
+// Diagnostics view's My changes mode: only the problems that weren't there
+// at the base (engine.Existing), with the base's label and how many were
+// already there. Unlike the default, it is an object:
+// {available, reason, label, files, newErrors, newWarnings, existing}.
+func (s *Server) newDiagnostics() interface{} {
+	r := s.eng.Changes()
+	out := map[string]interface{}{"available": r.Available, "reason": r.Reason}
+	if !r.Available {
+		return out
+	}
+	files := []wsFile{}
+	existing, newErrors, newWarnings := 0, 0, 0
+	for _, fd := range s.eng.WorkspaceDiagnostics() {
+		marks, _ := s.eng.Existing(fd.FilePath, fd.Diagnostics)
+		f := wsFile{FilePath: fd.FilePath, URI: pathToURI(fd.FilePath), RelativePath: fd.RelativePath, Diagnostics: []wsItem{}}
+		for i, d := range fd.Diagnostics {
+			if marks == nil || marks[i] {
+				existing++
+				continue
+			}
+			f.Diagnostics = append(f.Diagnostics, s.wsItem(fd.FilePath, d))
+			if d.Severity == engine.SevError {
+				f.Errors++
+			} else {
+				f.Warnings++
+			}
+		}
+		if len(f.Diagnostics) > 0 {
+			newErrors += f.Errors
+			newWarnings += f.Warnings
+			files = append(files, f)
+		}
+	}
+	sort.SliceStable(files, func(i, j int) bool { return files[i].Errors > files[j].Errors })
+	out["label"] = r.Label
+	out["files"] = files
+	out["newErrors"] = newErrors
+	out["newWarnings"] = newWarnings
+	out["existing"] = existing
 	return out
 }
 

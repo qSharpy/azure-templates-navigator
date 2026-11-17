@@ -59,8 +59,8 @@ func (e *Engine) resolve(r pipeline.TemplateRef, f *fileInfo) Resolution {
 	res.Alias = alias
 	if alias == "" || alias == "self" {
 		res.Kind = KindLocal
-		res.Path = resolveLocal(path, f.path)
-		res.Exists = fileExists(res.Path)
+		res.Path = e.resolveLocal(path, f.path)
+		res.Exists = e.exists(res.Path)
 		return res
 	}
 
@@ -79,11 +79,16 @@ func (e *Engine) resolve(r pipeline.TemplateRef, f *fileInfo) Resolution {
 	res.Repo = &decl
 
 	repoRoot := e.repoRoot(filepath.Dir(f.path))
-	parents := []string{filepath.Dir(repoRoot)}
+	parents := []string{filepath.Dir(e.realRepo(repoRoot))}
 	for _, root := range e.roots {
-		parents = append(parents, filepath.Dir(e.repoRoot(root)))
+		parents = append(parents, filepath.Dir(e.realRepo(e.repoRoot(root))))
 	}
-	loc := e.Repos.Locate(decl, parents, e.remoteFor(f.path))
+	var loc repos.Location
+	if e.shared {
+		loc = e.Repos.LocateIn(e.settings.Repositories, decl, parents, e.remoteFor(f.path))
+	} else {
+		loc = e.Repos.Locate(decl, parents, e.remoteFor(f.path))
+	}
 	res.RepoLoc = &loc
 	if loc.State != repos.StateReady {
 		res.Kind = KindRepoUnavailable
@@ -91,7 +96,7 @@ func (e *Engine) resolve(r pipeline.TemplateRef, f *fileInfo) Resolution {
 	}
 	res.Kind = KindExternal
 	res.Path = filepath.Join(loc.Dir, filepath.FromSlash(strings.TrimLeft(path, "/")))
-	res.Exists = fileExists(res.Path)
+	res.Exists = e.exists(res.Path)
 	return res
 }
 
@@ -139,13 +144,31 @@ func (e *Engine) repoRoot(dir string) string {
 	if r, ok := e.rootCache[dir]; ok {
 		return r
 	}
-	r := FindRepoRoot(dir)
+	r := ""
+	for top := range e.mirror {
+		if dir == top || strings.HasPrefix(dir, top+string(filepath.Separator)) {
+			r = top
+		}
+	}
+	if r == "" {
+		r = FindRepoRoot(dir)
+	}
 	e.rootCache[dir] = r
 	return r
 }
 
+// realRepo maps an exported repository top (baseline engines) to the
+// repository it was exported from.
+func (e *Engine) realRepo(top string) string {
+	if r, ok := e.mirror[top]; ok {
+		return r
+	}
+	return top
+}
+
 // origin is a memoised repos.OriginURL. Caller holds e.mu.
 func (e *Engine) origin(repoRoot string) string {
+	repoRoot = e.realRepo(repoRoot)
 	if e.originCache == nil {
 		e.originCache = map[string]string{}
 	}
@@ -157,9 +180,9 @@ func (e *Engine) origin(repoRoot string) string {
 	return u
 }
 
-func resolveLocal(ref, currentFile string) string {
+func (e *Engine) resolveLocal(ref, currentFile string) string {
 	if strings.HasPrefix(ref, "/") {
-		root := FindRepoRoot(filepath.Dir(currentFile))
+		root := e.repoRoot(filepath.Dir(currentFile))
 		return filepath.Join(root, filepath.FromSlash(strings.TrimLeft(ref, "/")))
 	}
 	return filepath.Join(filepath.Dir(currentFile), filepath.FromSlash(ref))

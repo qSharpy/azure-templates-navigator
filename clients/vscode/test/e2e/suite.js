@@ -233,6 +233,48 @@ async function run() {
   assert.strictEqual(problemItem.command.command, 'azure-templates-navigator.openTemplate');
   assert.ok(problemItem.command.arguments[0].filePath, 'problem opens its file');
 
+  // 11. My changes: an unsaved edit that passes an unknown parameter shows up
+  //     as new in the pipeline that has it, with the base named on top and
+  //     the big picture under it. Edited in memory, then reverted.
+  {
+    await vscode.commands.executeCommand('azure-templates-navigator.showMyChanges');
+    const head = await waitFor(async () => {
+      const r = await api.pipelines.getChildren();
+      return r && r.length && (r[0].base || r[0].message) ? r : null;
+    });
+    if (head[0].message) {
+      console.log('my changes unavailable:', head[0].message); // e.g. a source tarball without .git
+    } else {
+      assert.ok(head[0].label.startsWith('Since '), 'base row first');
+      assert.strictEqual(api.pipelines.getTreeItem(head[0]).command.command, 'azure-templates-navigator.chooseChangesBase');
+      const big = head.find(r => r.summary);
+      assert.ok(big && / of \d+ fail in total$/.test(big.description), 'big picture row');
+      const editor = await vscode.window.showTextDocument(doc);
+      const at = doc.getText().split('\n').findIndex(l => /^\s+parameters:\s*$/.test(l));
+      const indent = doc.lineAt(at).text.match(/^\s*/)[0] + '  ';
+      await editor.edit(e => e.insert(new vscode.Position(at + 1, 0), `${indent}atnE2eNotAParameter: x\n`));
+      const row = await waitFor(async () => {
+        const r = await api.pipelines.getChildren();
+        return (r || []).find(x => x.change && x.change.relativePath === 'azure-pipelines.yml'
+          && x.change.new.some(p => p.message.includes('atnE2eNotAParameter'))) || null;
+      });
+      console.log('my changes:', row.change.title);
+      const rows = await api.pipelines.getChildren();
+      assert.ok(rows[1].section && rows[1].label.startsWith('Files changed'), 'the files you changed come right under the base');
+      assert.ok(/^\+\d+ new/.test(row.change.title), 'new problems first in the title');
+      const newSection = (await api.pipelines.getChildren(row)).find(c => c.section);
+      assert.ok(newSection.label.startsWith('New ('), 'new problems listed under the pipeline');
+      // the Diagnostics view follows the same mode: only the new problem
+      const diag = await waitFor(async () => {
+        const r = await api.diagnostics.getChildren();
+        return r && r[0] && r[0].base && r.some(x => x.file && x.children.some(d => d.diag.message.includes('atnE2eNotAParameter'))) ? r : null;
+      });
+      assert.ok(!diag.some(x => x.file && x.children.some(d => !d.diag.message.includes('atnE2eNotAParameter'))), 'only new problems in My changes');
+      await vscode.commands.executeCommand('workbench.action.files.revert');
+    }
+    await vscode.commands.executeCommand('azure-templates-navigator.showAllPipelines');
+  }
+
   await vscode.commands.executeCommand('workbench.view.extension.azure-templates-navigator');
   await sleep(1500);
   console.log('E2E OK');

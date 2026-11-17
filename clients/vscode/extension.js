@@ -46,6 +46,10 @@ function serverSettings() {
       unusedParameters: c.get('diagnostics.unusedParameters'),
     },
     graph: { rootPath: c.get('graph.rootPath') },
+    changes: {
+      enabled: c.get('changes.enabled'),
+      dimExistingProblems: c.get('changes.dimExistingProblems'),
+    },
     repositories: {
       autoFetch: c.get('repositories.autoFetch'),
       cacheDir: c.get('repositories.cacheDir'),
@@ -145,8 +149,18 @@ async function activate(context) {
   const execute = (command, args) => request('workspace/executeCommand', { command, arguments: args || [] });
 
   const tree = new DependencyTreeProvider(request);
-  const diagnostics = new DiagnosticsTreeProvider(request);
-  const pipelines = new PipelinesTreeProvider(request);
+  // The Pipelines and Diagnostics views share one mode: 'all' (everything)
+  // or 'changes' (what your work changed), remembered per workspace.
+  const mode = context.workspaceState.get('pipelinesMode', 'all');
+  const diagnostics = new DiagnosticsTreeProvider(request, mode);
+  const pipelines = new PipelinesTreeProvider(request, mode);
+  const setPipelinesMode = async mode => {
+    pipelines.setMode(mode);
+    diagnostics.setMode(mode);
+    await context.workspaceState.update('pipelinesMode', mode);
+    await vscode.commands.executeCommand('setContext', `${SECTION}.pipelinesMode`, mode);
+  };
+  vscode.commands.executeCommand('setContext', `${SECTION}.pipelinesMode`, pipelines.mode);
   const repositories = new RepositoriesTreeProvider(request);
   const stats = new StatsTreeProvider(request);
   const graph = new GraphViewProvider(context, request);
@@ -169,17 +183,30 @@ async function activate(context) {
   const pipelinesView = vscode.window.createTreeView(`${SECTION}.pipelinesView`, { treeDataProvider: pipelines, showCollapseAll: true });
   const repoView = vscode.window.createTreeView(`${SECTION}.repositoriesView`, { treeDataProvider: repositories });
   const statsView = vscode.window.createTreeView(`${SECTION}.statsView`, { treeDataProvider: stats, showCollapseAll: true });
-  diagnostics.onCounts = (errors, warnings) => {
-    diagView.badge = errors + warnings > 0
-      ? { value: errors + warnings, tooltip: `${errors} error(s), ${warnings} warning(s)` }
+  diagnostics.onCounts = ({ mode, label, errors, warnings }) => {
+    const n = errors + warnings;
+    diagView.description = mode !== 'changes' ? '' : label ? `since ${label} · ` + (n ? `${n} new` : 'no new problems') : 'my changes';
+    diagView.badge = n > 0
+      ? { value: n, tooltip: `${errors} ${mode === 'changes' ? 'new ' : ''}error(s), ${warnings} ${mode === 'changes' ? 'new ' : ''}warning(s)` }
       : undefined;
   };
-  // "2 of 7 will fail" next to the view title; the badge counts failing pipelines.
-  pipelines.onSummary = reports => {
+  // Next to the view title. All: "2 of 7 will fail", the badge counts
+  // failing pipelines. My changes: "since main · 2 new errors", the badge
+  // counts new errors.
+  pipelines.onSummary = ({ mode, reports, changes }) => {
+    if (mode === 'changes') {
+      const c = changes && changes.available ? changes : null;
+      const n = c ? c.newErrors + c.newWarnings : 0;
+      pipelinesView.description = !c ? 'my changes' : `since ${c.label} · ` + (n ? `${n} new problem${n === 1 ? '' : 's'}` : 'no new problems');
+      pipelinesView.badge = c && c.newErrors ? { value: c.newErrors, tooltip: `${c.newErrors} new error(s) since ${c.label}` } : undefined;
+      return;
+    }
     const failing = (reports || []).filter(r => r.verdict === 'fail').length;
     const warned = (reports || []).filter(r => r.verdict === 'warn').length;
-    pipelinesView.description = !reports ? '' : failing ? `${failing} of ${reports.length} will fail`
-      : warned ? `${warned} of ${reports.length} may fail` : reports.length ? `all ${reports.length} OK` : '';
+    const fresh = (reports || []).reduce((n, r) => n + (r.change ? r.change.new : 0), 0);
+    pipelinesView.description = (!reports ? '' : failing ? `${failing} of ${reports.length} will fail`
+      : warned ? `${warned} of ${reports.length} may fail` : reports.length ? `all ${reports.length} OK` : '')
+      + (fresh ? ` · +${fresh} new` : '');
     pipelinesView.badge = failing ? { value: failing, tooltip: `${failing} pipeline(s) will fail when queued` } : undefined;
   };
   tree.onTitle = title => { treeView.description = title; };
@@ -274,6 +301,40 @@ async function activate(context) {
       await vscode.window.showTextDocument(vscode.Uri.parse(pick.problem.uri), {
         selection: new vscode.Range(r.start.line, r.start.character, r.end.line, r.end.character),
       });
+    },
+    // Pipelines view title: switch between every pipeline and your changes.
+    showMyChanges: () => setPipelinesMode('changes'),
+    showAllPipelines: () => setPipelinesMode('all'),
+    // What "my changes" are compared with: automatic, uncommitted only, a
+    // branch, or any ref typed in. Stored per branch (git config).
+    chooseChangesBase: async () => {
+      const choices = await request('atn/changeBases', {});
+      if (!choices || !choices.length) {
+        vscode.window.showInformationMessage('Changes are compared with a git commit: open a folder that is a git repository.');
+        return;
+      }
+      const other = { label: '$(edit) Another branch, tag or commit…', ref: undefined };
+      const pick = await vscode.window.showQuickPick([
+        ...choices.map(c => ({
+          label: `${c.picked ? '$(check) ' : ''}${c.ref === '' ? '$(sparkle) ' : c.ref === 'HEAD' ? '$(git-commit) ' : '$(git-branch) '}${c.label}`,
+          detail: c.detail, ref: c.ref,
+        })),
+        other,
+      ], { placeHolder: 'Compare my changes with…', matchOnDetail: true });
+      if (!pick) return;
+      let ref = pick.ref;
+      if (pick === other) {
+        ref = await vscode.window.showInputBox({ prompt: 'A branch, tag or commit to compare with', placeHolder: 'origin/main, feature/story, 3f2a1c4…' });
+        if (!ref) return;
+      }
+      try {
+        await client.sendRequest('atn/setChangesBase', { ref });
+      } catch (err) {
+        vscode.window.showErrorMessage(`Can't compare with ${ref}: ${err && err.message}`);
+        return;
+      }
+      await setPipelinesMode('changes');
+      refreshViews();
     },
     // Code lens "N usages" above a template: peek its call sites.
     showUsages: async (a = {}) => {
@@ -395,7 +456,7 @@ async function activate(context) {
   onEditor(vscode.window.activeTextEditor);
   refreshViews();
   // For the E2E test.
-  return { request, graph, stats, pipelines, repositories };
+  return { request, graph, stats, pipelines, diagnostics, repositories };
 }
 
 async function deactivate() {

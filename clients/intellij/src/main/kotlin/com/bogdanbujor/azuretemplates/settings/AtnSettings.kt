@@ -31,6 +31,8 @@ class AtnSettings : PersistentStateComponent<AtnSettings.Data> {
         var unusedParameters: Boolean = true
         var graphRootPath: String = ""
         var completionRequiredParameters: Boolean = true
+        var changesEnabled: Boolean = true
+        var changesDimExistingProblems: Boolean = false
         var autoFetch: Boolean = true
         var cacheDir: String = ""
         var refreshIntervalHours: Int = 12
@@ -62,6 +64,7 @@ class AtnSettings : PersistentStateComponent<AtnSettings.Data> {
         })
         add("graph", JsonObject().apply { addProperty("rootPath", d.graphRootPath) })
         add("completion", JsonObject().apply { addProperty("requiredParameters", d.completionRequiredParameters) })
+        add("changes", JsonObject().apply { addProperty("enabled", d.changesEnabled); addProperty("dimExistingProblems", d.changesDimExistingProblems) })
         add("repositories", JsonObject().apply {
             addProperty("autoFetch", d.autoFetch)
             addProperty("cacheDir", d.cacheDir)
@@ -98,6 +101,14 @@ class AtnSettingsConfigurable : BoundConfigurable("Azure Templates Navigator") {
             group("Validation") {
                 row { checkBox("Validate template call sites").bindSelected(s::diagnosticsEnabled) }
                 row { checkBox("Warn about unused template parameters").bindSelected(s::unusedParameters) }
+                row {
+                    checkBox("Show what my changes added and fixed").bindSelected(s::changesEnabled)
+                        .comment("Compares the project with the commit your work started from (git). Used by the Pipelines tab's My Changes view and the verdict above each pipeline")
+                }
+                row {
+                    checkBox("Show problems that were already there before my changes as information").bindSelected(s::changesDimExistingProblems)
+                        .comment("The Problems tool window's errors and warnings are then the ones your changes added. Verdicts and the Pipelines tab keep the real severities")
+                }
             }
             group("Completion") {
                 row {

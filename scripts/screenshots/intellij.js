@@ -257,6 +257,33 @@ const SHOTS = {
     const b = await boxOf(`box(decorator(toolWindow()))`);
     await capture('pipelinesTab', { ...b, h: 360 });
   },
+  // My changes: a template parameter renamed (unsaved), so the pipelines calling it get new
+  // errors on top of the ones they already had.
+  myChanges: async () => {
+    const rel = 'templates/run-tests.yml';
+    const original = fs.readFileSync(path.join(samples, rel), 'utf8');
+    const mode = '"azureTemplatesNavigator.pipelines.onlyMyChanges"';
+    try {
+      await ide(`
+        com.intellij.ide.util.PropertiesComponent.getInstance(P).setValue(${mode}, true, false);
+        var e = openAt(${JSON.stringify(rel)}, "- name: testProject");
+        var doc = e.getDocument();
+        var at = String(doc.getText()).indexOf("- name: testProject") + "- name: testProject".length;
+        com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(P, new java.lang.Runnable({ run: function () { doc.insertString(at, "Path"); } }));
+        tab("PipelinesPanel", 440);
+      `);
+      await sleep(5000);
+      const b = await boxOf(`box(decorator(toolWindow()))`);
+      await capture('myChanges', { ...b, h: 420 });
+    } finally {
+      await ide(`
+        var e = open(${JSON.stringify(rel)}, 0, 0);
+        com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(P, new java.lang.Runnable({ run: function () { e.getDocument().setText(${JSON.stringify(original)}); } }));
+        com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().saveDocument(e.getDocument());
+        com.intellij.ide.util.PropertiesComponent.getInstance(P).setValue(${mode}, false, false);
+      `);
+    }
+  },
   // Quick Documentation on a template call: its parameters.
   hoverParameters: async () => {
     await ide(`openAt("azure-pipelines.yml", "templates/build-dotnet.yml");`);

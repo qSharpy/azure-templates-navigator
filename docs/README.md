@@ -7,6 +7,7 @@ The screenshots use the repository's [`samples/`](../samples) folder. Open it to
 
 - [Shortcuts](#shortcuts)
 - [Will this pipeline run?](#will-this-pipeline-run)
+- [What did my changes break?](#what-did-my-changes-break) — only the problems your work added
 - [A template's parameters](#a-templates-parameters)
 - [Complete a template call in one go](#complete-a-template-call-in-one-go)
 - [Problems and quick fixes](#problems-and-quick-fixes)
@@ -52,6 +53,51 @@ workspace, failing first.
 | ![The verdict above a pipeline in VS Code](images/vscode/pipelineVerdict.png) | ![The verdict above a pipeline in IntelliJ](images/intellij/pipelineVerdict.png) |
 | ![Clicking the verdict lists the problems](images/vscode/checkPipeline.png) | ![The Pipelines tab](images/intellij/pipelinesTab.png) |
 | ![The Pipelines view](images/vscode/pipelinesView.png) | |
+
+## What did my changes break?
+
+In a big repository, the Pipelines view may say that 8 of 12 pipelines will fail, and that was already true before you started.
+After you change a template, you need to know whether *your* change added anything. **My changes** answers that. It compares the
+workspace with the commit your work started from, including commits you have already pushed, uncommitted edits and unsaved
+editors. Under the row that says where your work started, it lists:
+
+- the files you changed, with the problems each one added or fixed and how many pipelines use it;
+- the big picture: what your changes added and fixed, and how many pipelines fail in total. Click it to go back to every pipeline;
+- each pipeline your changes reach, with its new problems, the problems it no longer has (*fixed*) and the count already there
+  before you started.
+
+A problem counts as new only if it wasn't there before. Moving lines around doesn't make an old problem new, and a problem in a
+template that three pipelines use counts once in the totals. A file you rename shows its problems as fixed under the old name and
+new under the new one.
+
+![My changes in VS Code: a template parameter renamed, three pipelines with new errors](images/vscode/myChanges.png)
+
+![My changes in IntelliJ: the same rename in the Pipelines tab](images/intellij/myChanges.png)
+
+**Switch between the two views** with the button in the Pipelines view title (VS Code) or *Only My Changes* in the Pipelines
+tab's toolbar (IntelliJ). The **Diagnostics** view (tab) has the same buttons and follows the same switch: in My changes it lists
+only the problems your changes added, and says how many that were already there it hides. In the full list, problems your changes added say *new*, and so does the verdict above the pipeline:
+*✗ Will fail when queued: 41 errors · +2 new since feature/story*.
+
+**Where your work started** is shown on the first row. Git doesn't record which branch a branch came from, so it is a guess:
+
+1. on `main` (or the default branch): your unpushed commits and uncommitted changes, compared with `origin/main`;
+2. on a branch you created from another one (`git switch -c mywork` while on `feature/story`): where your branch splits from
+   `feature/story`. This stays right after you rebase or merge `feature/story` in;
+3. on a branch you checked out from the remote, or when there's no record of where it came from: where it splits from the
+   default branch.
+
+To compare with something else, click that row (or *Compare My Changes With…* in the view title or toolbar). The options are
+*Automatic*, *Uncommitted changes only*, a recent branch, or any branch, tag or commit you type in. The choice is remembered for the branch
+(in `git config branch.<name>.atnBase`), so the CLI and the other IDE use it too.
+
+**Quiet the Problems panel** with `azure-templates-navigator.changes.dimExistingProblems` (VS Code) or *Show problems that were
+already there before my changes as information* (IntelliJ settings). Errors and warnings that were already there at the base then
+show as information, ending with *(already there at origin/main)*, so the Problems panel's errors and warnings are the ones your
+changes added. The verdicts, the Pipelines view and the CLI keep the real severities. It is off by default.
+
+Turn it off with `azure-templates-navigator.changes.enabled` (VS Code) or *Show what my changes added and fixed* in the
+settings (IntelliJ). It needs a git repository and the `git` command.
 
 ## A template's parameters
 
@@ -215,7 +261,9 @@ filled in), *Documentation* (this page) and *Show Log*.
 ## In a terminal or a pipeline
 
 The `atn` binary behind both IDEs also runs on its own. `atn check` prints every pipeline's verdict and exits with 1 on errors,
-and `--format azure` turns the problems into annotations on an Azure Pipelines run. See the [CLI section of the main
+and `--format azure` turns the problems into annotations on an Azure Pipelines run. `atn check --since origin/main` reports
+and fails on only the problems that are new since `origin/main`, so a repository can gate pull requests before its existing
+problems are fixed. See the [CLI section of the main
 README](../README.md#cli).
 
 ---

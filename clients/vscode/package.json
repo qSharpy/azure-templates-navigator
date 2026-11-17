@@ -2,7 +2,7 @@
   "name": "azure-templates-navigator",
   "displayName": "Azure Templates Navigator",
   "description": "Hover, validate, autocomplete and navigate Azure Pipelines YAML templates — including templates from other repositories, which are downloaded automatically.",
-  "version": "2.7.0",
+  "version": "2.8.0",
   "publisher": "bogdanbujor",
   "license": "MIT",
   "icon": "logo.png",
@@ -57,6 +57,16 @@
           "type": "boolean",
           "default": true,
           "description": "Warn about parameters a template declares but never references."
+        },
+        "azure-templates-navigator.changes.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Compare the workspace with the commit your work started from (where this branch split from the branch it was created from, or a base you choose). The Pipelines view's *My changes* mode and the verdict above each pipeline then show the problems your changes added and fixed. Needs a git repository."
+        },
+        "azure-templates-navigator.changes.dimExistingProblems": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the errors and warnings that were already there before your changes (at the commit your work started from) as information, so the Problems panel's errors and warnings are the ones your changes added. The Pipelines view and the verdicts keep the real severities."
         },
         "azure-templates-navigator.completion.requiredParameters": {
           "type": "boolean",
@@ -134,6 +144,24 @@
       }
     },
     "commands": [
+      {
+        "command": "azure-templates-navigator.showMyChanges",
+        "title": "Show My Changes",
+        "category": "Azure Templates",
+        "icon": "$(git-compare)"
+      },
+      {
+        "command": "azure-templates-navigator.showAllPipelines",
+        "title": "Show Everything",
+        "category": "Azure Templates",
+        "icon": "$(list-flat)"
+      },
+      {
+        "command": "azure-templates-navigator.chooseChangesBase",
+        "title": "Compare My Changes With…",
+        "category": "Azure Templates",
+        "icon": "$(git-branch)"
+      },
       {
         "command": "azure-templates-navigator.openTemplate",
         "title": "Open Template File",
@@ -369,6 +397,21 @@
           "group": "navigation@8"
         },
         {
+          "command": "azure-templates-navigator.showMyChanges",
+          "when": "view =~ /^azure-templates-navigator\\.(pipelinesView|diagnosticsPanel)$/ && azure-templates-navigator.pipelinesMode != changes",
+          "group": "navigation@0"
+        },
+        {
+          "command": "azure-templates-navigator.showAllPipelines",
+          "when": "view =~ /^azure-templates-navigator\\.(pipelinesView|diagnosticsPanel)$/ && azure-templates-navigator.pipelinesMode == changes",
+          "group": "navigation@0"
+        },
+        {
+          "command": "azure-templates-navigator.chooseChangesBase",
+          "when": "view =~ /^azure-templates-navigator\\.(pipelinesView|diagnosticsPanel)$/",
+          "group": "navigation@1"
+        },
+        {
           "command": "azure-templates-navigator.refresh",
           "when": "view == azure-templates-navigator.pipelinesView",
           "group": "navigation@9"
@@ -495,6 +538,18 @@
             },
             "completionEvents": [
               "onCommand:azure-templates-navigator.pipelinesView.focus"
+            ]
+          },
+          {
+            "id": "myChanges",
+            "title": "What did my changes break?",
+            "description": "When many pipelines already fail, click **Show My Changes** in the title of the **Pipelines** view. It compares your work with where it started (where your branch split from the branch it came from, committed or not): the files you changed, the problems they added and fixed, and the pipelines they reach, with the total underneath. The **Diagnostics** view follows the same switch. Click the *Since* row to compare with another branch or with your last commit. Turn on \"changes.dimExistingProblems\" to show the older problems as information in the Problems panel.\n[Show My Changes](command:azure-templates-navigator.showMyChanges)",
+            "media": {
+              "image": "media/tips/myChanges.png",
+              "altText": "What did my changes break?"
+            },
+            "completionEvents": [
+              "onCommand:azure-templates-navigator.showMyChanges"
             ]
           },
           {

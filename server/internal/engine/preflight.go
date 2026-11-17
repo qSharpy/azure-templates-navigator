@@ -383,6 +383,9 @@ type Problem struct {
 	Path         string `json:"path"`
 	RelativePath string `json:"relativePath"`
 	Diagnostic
+	// New: your work added it (Pipelines view, from the last comparison
+	// with the base; see changes.go).
+	New bool `json:"new,omitempty"`
 }
 
 // PipelineReport answers "will this pipeline run?": every error and warning
@@ -396,6 +399,8 @@ type PipelineReport struct {
 	Dynamic      int       `json:"dynamic"`   // template references decided at run time (not checked)
 	Problems     []Problem `json:"problems"`
 	Files        []string  `json:"files"` // the pipeline and every template it reaches
+	// Change: what your work changed in it (Pipelines view only).
+	Change *PipelineChange `json:"change,omitempty"`
 }
 
 // Title is a one-line verdict.
@@ -466,6 +471,7 @@ func (e *Engine) PipelineOverview() (reports []PipelineReport, ok bool) {
 		return nil, false
 	}
 	reports = e.PipelineChecks()
+	e.annotate(reports)
 	rank := map[string]int{"fail": 0, "warn": 1, "ok": 2}
 	sort.SliceStable(reports, func(i, j int) bool {
 		a, b := rank[reports[i].Verdict()], rank[reports[j].Verdict()]

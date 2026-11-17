@@ -12,6 +12,16 @@
       "vscodeCommand": "azure-templates-navigator.pipelinesView.focus"
     },
     {
+      "id": "myChanges",
+      "title": "What did my changes break?",
+      "vscode": "When many pipelines already fail, click **Show My Changes** in the title of the **Pipelines** view. It compares your work with where it started (where your branch split from the branch it came from, committed or not): the files you changed, the problems they added and fixed, and the pipelines they reach, with the total underneath. The **Diagnostics** view follows the same switch. Click the *Since* row to compare with another branch or with your last commit. Turn on `changes.dimExistingProblems` to show the older problems as information in the Problems panel.",
+      "intellij": "When many pipelines already fail, turn on **Only My Changes** in the toolbar of the **Pipelines** tab. It compares your work with where it started (where your branch split from the branch it came from, committed or not): the files you changed, the problems they added and fixed, and the pipelines they reach, with the total underneath. The **Diagnostics** tab follows the same switch. *Compare My Changes With…* picks another branch or your last commit. In Settings, *Show problems that were already there before my changes as information* quiets the Problems tool window.",
+      "example": "Since origin/main @ 3f2a1c4    2 commits + uncommitted\nFiles changed (1)\n  templates/run-tests.yml    modified · 3 pipelines use it\n1 file changed · 3 pipelines affected · 4 new errors\n  azure-pipelines.yml    +2 new · 1 already there",
+      "exampleLanguage": "text",
+      "vscodeButton": "Show My Changes",
+      "vscodeCommand": "azure-templates-navigator.showMyChanges"
+    },
+    {
       "id": "hoverParameters",
       "title": "See a template's parameters",
       "vscode": "Hover a `template:` line to see the template's parameters, with their types, defaults and allowed values. Required ones are highlighted. Ctrl/Cmd+click opens the template.",

@@ -37,6 +37,10 @@ check flags:
   --no-fetch        Don't download missing repositories
   --format FMT      text (default) | json | azure (Azure Pipelines logging commands)
   --strict          Treat warnings as errors
+  --since REF       Only report problems that are new since REF, and fail only on those:
+                    a branch (where HEAD splits from it), a commit, HEAD (uncommitted
+                    changes only) or auto (where this branch started). Needs the history
+                    back to REF: in Azure Pipelines, checkout with fetchDepth: 0.
 `
 
 func main() {
@@ -181,6 +185,7 @@ func runCheck(args []string) int {
 	noFetch := fs.Bool("no-fetch", false, "don't fetch missing repositories")
 	format := fs.String("format", "text", "text | json | azure")
 	strict := fs.Bool("strict", false, "treat warnings as errors")
+	since := fs.String("since", "", "only report problems that are new since this branch, commit, HEAD or auto")
 	_ = fs.Parse(args)
 
 	e, err := c.engine(false)
@@ -190,6 +195,10 @@ func runCheck(args []string) int {
 	}
 	if !*noFetch {
 		fetchAll(e, *format != "text")
+	}
+
+	if *since != "" {
+		return runCheckSince(e, *since, *format, *strict, c.root, fs.Args())
 	}
 
 	all := e.DiagnoseAll()
@@ -307,4 +316,118 @@ func relTo(root, p string) string {
 		return filepath.ToSlash(p)
 	}
 	return filepath.ToSlash(rel)
+}
+
+// runCheckSince is `check --since`: the problems your work added since a
+// commit, for a gate that teams adopt before the existing problems are
+// fixed. Exit code 1 on new errors (or new warnings with --strict), 2 when
+// the comparison can't be made.
+func runCheckSince(e *engine.Engine, since, format string, strict bool, rootFlag string, files []string) int {
+	r, err := e.ChangesSince(since)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "atn: can't compare with %s: %v\n", since, err)
+		return 2
+	}
+	if format != "text" {
+		fmt.Fprintf(os.Stderr, "atn: comparing with %s: %s\n", r.Label, r.Summary())
+	}
+	root, _ := filepath.Abs(rootFlag)
+	only := map[string]bool{}
+	for _, a := range files {
+		if p, err := filepath.Abs(a); err == nil {
+			only[p] = true
+		}
+	}
+	// every new problem once: a template's problem reaches several pipelines
+	type key struct {
+		path      string
+		line, col int
+		code, msg string
+	}
+	seen := map[key]bool{}
+	var news []engine.Problem
+	add := func(scope string, ps []engine.Problem) {
+		if len(only) > 0 && !only[scope] {
+			return
+		}
+		for _, p := range ps {
+			k := key{p.Path, p.Line, p.StartCol, p.Code, p.Message}
+			if !seen[k] {
+				seen[k] = true
+				news = append(news, p)
+			}
+		}
+	}
+	for _, c := range r.Pipelines {
+		add(c.Path, c.New)
+	}
+	for _, f := range r.Files {
+		add(f.Path, f.New)
+	}
+	sort.SliceStable(news, func(i, j int) bool {
+		if news[i].Path != news[j].Path {
+			return news[i].Path < news[j].Path
+		}
+		return news[i].Line < news[j].Line
+	})
+
+	sevName := map[int]string{1: "error", 2: "warning"}
+	errorsN, warningsN := 0, 0
+	type jd struct {
+		File     string `json:"file"`
+		Line     int    `json:"line"`
+		Column   int    `json:"column"`
+		Severity string `json:"severity"`
+		Code     string `json:"code"`
+		Message  string `json:"message"`
+	}
+	jout := []jd{}
+	for _, p := range news {
+		sev := p.Severity
+		if sev == engine.SevWarning && strict {
+			sev = engine.SevError
+		}
+		if sev == engine.SevError {
+			errorsN++
+		} else {
+			warningsN++
+		}
+		rel := relTo(root, p.Path)
+		switch format {
+		case "json":
+			jout = append(jout, jd{rel, p.Line + 1, p.StartCol + 1, sevName[sev], p.Code, p.Message})
+		case "azure":
+			fmt.Printf("##vso[task.logissue type=%s;sourcepath=%s;linenumber=%d;columnnumber=%d;code=%s]%s\n",
+				sevName[sev], rel, p.Line+1, p.StartCol+1, p.Code, strings.ReplaceAll(p.Message, "\n", " "))
+		default:
+			fmt.Printf("%s:%d:%d: %s: %s [%s]\n", rel, p.Line+1, p.StartCol+1, sevName[sev], p.Message, p.Code)
+		}
+	}
+	switch format {
+	case "json":
+		b, _ := json.MarshalIndent(jout, "", "  ")
+		fmt.Println(string(b))
+	case "text":
+		fmt.Fprintf(os.Stderr, "\nSince %s: %s\n", r.Label, r.Summary())
+		if r.AllPipelines > 0 {
+			fmt.Fprintf(os.Stderr, "All pipelines: %d of %d fail when queued\n", r.AllFailing, r.AllPipelines)
+		}
+		width := 0
+		for _, c := range r.Pipelines {
+			if n := len(relTo(root, c.Path)); n > width {
+				width = n
+			}
+		}
+		if len(r.Pipelines) > 0 {
+			fmt.Fprintf(os.Stderr, "\nPipelines your changes reach:\n")
+		}
+		for _, c := range r.Pipelines {
+			mark := map[string]string{"fail": "✗", "warn": "⚠", "ok": "✓", "": "–"}[c.Now.Verdict]
+			fmt.Fprintf(os.Stderr, "  %s %-*s  %s\n", mark, width, relTo(root, c.Path), c.Title())
+		}
+	}
+	if errorsN > 0 {
+		return 1
+	}
+	return 0
 }

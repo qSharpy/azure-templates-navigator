@@ -62,6 +62,13 @@ import java.awt.event.MouseEvent
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import javax.swing.Icon
+import javax.swing.JList
+import com.intellij.ui.ColoredListCellRenderer
+import com.intellij.openapi.ui.popup.JBPopupFactory
+import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.project.DumbAware
+import com.intellij.openapi.actionSystem.ToggleAction
+import com.intellij.ide.util.PropertiesComponent
 import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.JTree
@@ -239,7 +246,11 @@ data class Item(
     val error: Boolean = false,
     val data: JsonObject? = null,
     val open: (() -> Unit)? = null,
+    /** Expanded when the tree is built. */
+    val expand: Boolean = false,
 )
+
+private const val MY_CHANGES_KEY = "azureTemplatesNavigator.pipelines.onlyMyChanges"
 
 /** Base class: a tree fed by an async server request, refreshed on change. */
 abstract class ServerTreePanel(protected val project: Project) : SimpleToolWindowPanel(true, true), Disposable {
@@ -289,6 +300,80 @@ abstract class ServerTreePanel(protected val project: Project) : SimpleToolWindo
         PopupHandler.installPopupMenu(tree, DefaultActionGroup(*actions), "AzureTemplatesNavigatorPopup")
     }
 
+    private val props = PropertiesComponent.getInstance(project)
+
+    /** "Only My Changes", shared by the Pipelines and Diagnostics tabs and remembered per project. */
+    protected var onlyMyChanges: Boolean
+        get() = props.getBoolean(MY_CHANGES_KEY, false)
+        set(v) = props.setValue(MY_CHANGES_KEY, v, false)
+
+    /** The toolbar's Only My Changes toggle and Compare My Changes With… (Pipelines and Diagnostics tabs). */
+    protected fun myChangesActions(): Array<AnAction> = arrayOf(
+        object : ToggleAction("Only My Changes", "Show only what your changes did since your work started: the problems they added and fixed, and the pipelines they reach", AllIcons.Actions.Diff), DumbAware {
+            override fun getActionUpdateThread() = ActionUpdateThread.EDT
+            override fun isSelected(e: AnActionEvent) = onlyMyChanges
+            override fun setSelected(e: AnActionEvent, state: Boolean) { onlyMyChanges = state; service.fireChanged() }
+        },
+        action("Compare My Changes With…", AllIcons.Vcs.Branch) { chooseBase() },
+    )
+
+    /** Pick what "my changes" are compared with; the choice is stored per branch (git config). */
+    protected fun chooseBase() {
+        service.changeBases().thenAccept { data ->
+            val choices = data.arr().mapNotNull { it.obj() }.toMutableList()
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed) return@invokeLater
+                if (choices.isEmpty()) {
+                    Messages.showInfoMessage(project, "Changes are compared with a git commit: open a project that is a git repository.", "Compare My Changes")
+                    return@invokeLater
+                }
+                val other = JsonObject().apply { addProperty("label", "Another branch, tag or commit…"); addProperty("other", true) }
+                choices += other
+                JBPopupFactory.getInstance().createPopupChooserBuilder(choices)
+                    .setTitle("Compare My Changes With")
+                    .setNamerForFiltering { it.str("label") }
+                    .setRenderer(object : ColoredListCellRenderer<JsonObject>() {
+                        override fun customizeCellRenderer(list: JList<out JsonObject>, value: JsonObject, index: Int, selected: Boolean, hasFocus: Boolean) {
+                            icon = when {
+                                value.has("other") -> AllIcons.Actions.Edit
+                                value.get("picked")?.asBoolean == true -> AllIcons.Actions.Checked
+                                value.str("ref") == "HEAD" -> AllIcons.Vcs.CommitNode
+                                value.str("ref").isEmpty() -> AllIcons.Actions.Lightning
+                                else -> AllIcons.Vcs.Branch
+                            }
+                            append(value.str("label"))
+                            value.str("detail").takeIf { it.isNotEmpty() }?.let { append("  $it", SimpleTextAttributes.GRAYED_ATTRIBUTES) }
+                        }
+                    })
+                    .setItemChosenCallback { pick ->
+                        val ref = if (pick.has("other"))
+                            Messages.showInputDialog(project, "A branch, tag or commit to compare with", "Compare My Changes", null, "", null) ?: return@setItemChosenCallback
+                        else pick.str("ref")
+                        setBase(ref)
+                    }
+                    .createPopup()
+                    .showInCenterOf(this)
+            }
+        }
+    }
+
+    private fun setBase(ref: String) {
+        service.setChangesBase(ref).whenComplete { _, err ->
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed) return@invokeLater
+                if (err != null) {
+                    val msg = generateSequence(err) { it.cause }.last().message ?: err.toString()
+                    Messages.showErrorDialog(project, "Can't compare with $ref: $msg", "Compare My Changes")
+                    return@invokeLater
+                }
+                onlyMyChanges = true
+                service.fireChanged() // both tabs reload
+
+            }
+        }
+    }
+
+
     abstract fun load(): CompletableFuture<JsonElement?>
     abstract fun build(root: DefaultMutableTreeNode, json: JsonElement?)
 
@@ -303,7 +388,7 @@ abstract class ServerTreePanel(protected val project: Project) : SimpleToolWindo
                 TreeUtil.treeNodeTraverser(root).forEach { n ->
                     val node = n as DefaultMutableTreeNode
                     val item = node.userObject as? Item
-                    if ((expandTopLevel && node.level == 1) || (item != null && item.label in expanded)) {
+                    if ((expandTopLevel && node.level == 1) || (item != null && (item.expand || item.label in expanded))) {
                         tree.expandPath(TreeUtil.getPathFromRoot(node))
                     }
                 }
@@ -402,47 +487,75 @@ class DependenciesPanel(project: Project) : ServerTreePanel(project) {
 // ── Diagnostics ───────────────────────────────────────────────────────────
 class DiagnosticsPanel(project: Project) : ServerTreePanel(project) {
     init {
-        toolbar(action("Refresh", AllIcons.Actions.Refresh) { service.execute("atn.refresh"); reload() })
+        toolbar(*myChangesActions(), action("Refresh", AllIcons.Actions.Refresh) { service.execute("atn.refresh"); reload() })
         reload()
     }
 
-    override fun load() = service.workspaceDiagnostics()
+    override fun load() = service.workspaceDiagnostics(onlyNew = onlyMyChanges)
 
     override fun build(root: DefaultMutableTreeNode, json: JsonElement?) {
+        if (onlyMyChanges) {
+            // Only My Changes: {available, reason, label, files, newErrors, newWarnings, existing}
+            val c = json.obj()
+            if (c == null) {
+                root.add(DefaultMutableTreeNode(Item("Comparing with where your work started…", "waiting for the language server", AllIcons.Process.Step_1)))
+                return
+            }
+            if (c.get("available")?.asBoolean != true) {
+                root.add(DefaultMutableTreeNode(Item(c.str("reason").ifEmpty { "Nothing to compare with" }, icon = AllIcons.General.Information,
+                    tooltip = "Changes are compared with a git commit: open a project that is a git repository")))
+                return
+            }
+            val existing = c.int("existing")
+            root.add(DefaultMutableTreeNode(Item("Since ${c.str("label")}", if (existing > 0) "$existing already there, hidden" else "", AllIcons.Vcs.Branch,
+                "<html>Only the problems your changes added. $existing that were already there are hidden: turn off Only My Changes to see them.<br><br>" +
+                    "Double-click to compare with another branch or commit</html>", open = { chooseBase() })))
+            val files = c.list("files")
+            if (files.isEmpty()) root.add(DefaultMutableTreeNode(Item("No new problems", icon = AllIcons.General.InspectionsOK)))
+            files.forEach { root.add(fileNode(it, expand = true)) }
+            return
+        }
         val files = json.arr().mapNotNull { it.obj() }
         if (files.isEmpty()) {
             root.add(DefaultMutableTreeNode(Item("No problems found", icon = AllIcons.General.InspectionsOK)))
             return
         }
-        for (f in files) {
-            val counts = listOfNotNull(
-                f.int("errors").takeIf { it > 0 }?.let { "$it error(s)" },
-                f.int("warnings").takeIf { it > 0 }?.let { "$it warning(s)" },
-            ).joinToString(", ")
-            val path = f.str("filePath")
-            val fileNode = DefaultMutableTreeNode(Item(f.str("relativePath"), counts, AllIcons.FileTypes.Yaml, open = { service.openFile(path) }))
-            for (d in f.list("diagnostics")) {
-                val err = d.int("severity") == 1
-                fileNode.add(DefaultMutableTreeNode(Item(d.str("message"), "Ln ${d.int("line") + 1}",
-                    if (err) AllIcons.General.Error else AllIcons.General.Warning, "[${d.str("code")}]",
-                    open = { service.openFile(path, d.int("line")) })))
-            }
-            root.add(fileNode)
+        files.forEach { root.add(fileNode(it)) }
+    }
+
+    private fun fileNode(f: JsonObject, expand: Boolean = false): DefaultMutableTreeNode {
+        val counts = listOfNotNull(
+            f.int("errors").takeIf { it > 0 }?.let { "$it error(s)" },
+            f.int("warnings").takeIf { it > 0 }?.let { "$it warning(s)" },
+        ).joinToString(", ")
+        val path = f.str("filePath")
+        val fileNode = DefaultMutableTreeNode(Item(f.str("relativePath"), counts, AllIcons.FileTypes.Yaml, open = { service.openFile(path) }, expand = expand))
+        for (d in f.list("diagnostics")) {
+            val err = d.int("severity") == 1
+            fileNode.add(DefaultMutableTreeNode(Item(d.str("message"), "Ln ${d.int("line") + 1}",
+                if (err) AllIcons.General.Error else AllIcons.General.Warning, "[${d.str("code")}]",
+                open = { service.openFile(path, d.int("line")) })))
         }
+        return fileNode
     }
 }
 
 // ── Pipelines ─────────────────────────────────────────────────────────────
 /**
- * Every root pipeline with its verdict ("Will fail when queued: 2 errors"),
- * failing first, from atn/pipelineCheck without a uri. Expand a pipeline for
- * its problems, in it and in the templates it uses; double-click to open.
+ * Two views, switched with "Only My Changes" in the toolbar (remembered per project):
+ *  - every root pipeline with its verdict ("Will fail when queued: 2 errors"), failing
+ *    first, from atn/pipelineCheck without a uri; problems your changes added say "new";
+ *  - what your changes did since the commit your work started from (atn/changes): the
+ *    base on top (double-click to compare with something else), the files you changed,
+ *    the totals, then each pipeline your changes reach with its new and fixed problems.
+ * Double-click a pipeline or problem to open it.
  */
 class PipelinesPanel(project: Project) : ServerTreePanel(project) {
     override val expandTopLevel = false
 
     init {
         toolbar(
+            *myChangesActions(),
             action("Refresh", AllIcons.Actions.Refresh) { service.execute("atn.refresh"); reload() },
             action("Expand All", AllIcons.Actions.Expandall) { TreeUtil.expandAll(tree) },
             action("Collapse All", AllIcons.Actions.Collapseall) { TreeUtil.collapseAll(tree, 1) },
@@ -451,15 +564,35 @@ class PipelinesPanel(project: Project) : ServerTreePanel(project) {
         reload()
     }
 
-    override fun load() = service.pipelineChecks()
+    override fun load() = if (onlyMyChanges) service.changes() else service.pipelineChecks()
 
     private fun verdictIcon(verdict: String): Icon = when (verdict) {
         "fail" -> AllIcons.General.Error
         "warn" -> AllIcons.General.Warning
-        else -> AllIcons.General.InspectionsOK
+        "ok" -> AllIcons.General.InspectionsOK
+        else -> AllIcons.General.Remove
     }
 
     override fun build(root: DefaultMutableTreeNode, json: JsonElement?) {
+        if (onlyMyChanges) buildChanges(root, json.obj()) else buildAll(root, json)
+    }
+
+    private fun problemNode(p: JsonObject, fixed: Boolean = false): DefaultMutableTreeNode {
+        val line = p.get("range").obj()?.get("start").obj()?.int("line") ?: 0
+        val where = "${p.str("relativePath")}:${line + 1}"
+        val isNew = p.get("new")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+        val icon = when {
+            fixed -> AllIcons.General.InspectionsOK
+            p.int("severity") == 1 -> AllIcons.General.Error
+            else -> AllIcons.General.Warning
+        }
+        val note = if (fixed) "<br>Fixed: it was there at the base and is gone now" else if (isNew) "<br>New: your changes added it" else ""
+        return DefaultMutableTreeNode(Item(p.str("message"), (if (isNew) "new · " else "") + where, icon,
+            "<html>${StringUtil.escapeXmlEntities(where)} [${StringUtil.escapeXmlEntities(p.str("code"))}]$note</html>",
+            data = p, open = { service.openFile(p.str("filePath"), line) }))
+    }
+
+    private fun buildAll(root: DefaultMutableTreeNode, json: JsonElement?) {
         if (json == null || json.isJsonNull) {
             // null: diagnostics are off (no verdicts), or the server isn't up yet
             val off = !AtnSettings.getInstance().state.diagnosticsEnabled
@@ -476,27 +609,96 @@ class PipelinesPanel(project: Project) : ServerTreePanel(project) {
         }
         val failing = reports.count { it.str("verdict") == "fail" }
         val warned = reports.count { it.str("verdict") == "warn" }
+        val fresh = reports.sumOf { it.get("change").obj()?.int("new") ?: 0 }
         val summary = when {
             failing > 0 -> "$failing of ${reports.size} pipelines will fail when queued"
             warned > 0 -> "$warned of ${reports.size} pipelines may fail while running"
             else -> "All ${reports.size} pipelines: no problems found"
         }
-        root.add(DefaultMutableTreeNode(Item(summary, icon = verdictIcon(if (failing > 0) "fail" else if (warned > 0) "warn" else "ok"))))
+        root.add(DefaultMutableTreeNode(Item(summary, if (fresh > 0) "+$fresh new from your changes" else "",
+            verdictIcon(if (failing > 0) "fail" else if (warned > 0) "warn" else "ok"))))
         for (r in reports) {
             val path = r.str("filePath")
-            val node = DefaultMutableTreeNode(Item(r.str("relativePath"), r.str("title").substringAfter(' '), verdictIcon(r.str("verdict")),
-                "<html>${StringUtil.escapeXmlEntities(r.str("title"))}<br>${r.int("templates")} template(s) checked</html>",
+            val change = r.get("change").obj()
+            val desc = r.str("title").substringAfter(' ') + (change?.int("new")?.takeIf { it > 0 }?.let { " · +$it new" } ?: "")
+            val tip = "<html>${StringUtil.escapeXmlEntities(r.str("title"))}<br>${r.int("templates")} template(s) checked" +
+                (change?.let { "<br>Your changes: ${StringUtil.escapeXmlEntities(it.str("title"))}" } ?: "") + "</html>"
+            val node = DefaultMutableTreeNode(Item(r.str("relativePath"), desc, verdictIcon(r.str("verdict")), tip,
                 data = r, open = { service.openFile(path) }))
-            for (p in r.list("problems")) {
-                val line = p.get("range").obj()?.get("start").obj()?.int("line") ?: 0
-                val where = "${p.str("relativePath")}:${line + 1}"
-                node.add(DefaultMutableTreeNode(Item(p.str("message"), where,
-                    if (p.int("severity") == 1) AllIcons.General.Error else AllIcons.General.Warning,
-                    "$where [${p.str("code")}]", data = p, open = { service.openFile(p.str("filePath"), line) })))
-            }
+            for (p in r.list("problems")) node.add(problemNode(p))
             root.add(node)
         }
     }
+
+    private fun buildChanges(root: DefaultMutableTreeNode, c: JsonObject?) {
+        if (c == null) {
+            root.add(DefaultMutableTreeNode(Item("Comparing with where your work started…", "waiting for the language server", AllIcons.Process.Step_1)))
+            return
+        }
+        if (c.get("available")?.asBoolean != true) {
+            root.add(DefaultMutableTreeNode(Item(c.str("reason").ifEmpty { "Nothing to compare with" }, icon = AllIcons.General.Information,
+                tooltip = "Changes are compared with a git commit: open a project that is a git repository")))
+            return
+        }
+        val bases = c.list("bases")
+        val base = bases.firstOrNull()
+        val commits = base?.int("commits") ?: 0
+        val baseDesc = when {
+            commits > 0 -> "$commits commit${if (commits == 1) "" else "s"} + uncommitted"
+            base?.str("ref") == "HEAD" -> ""
+            else -> "uncommitted"
+        }
+        val baseTip = bases.joinToString("<br>") { b ->
+            StringUtil.escapeXmlEntities("${b.str("repo")}: ${b.str("detail")}") + (b.str("error").takeIf { it.isNotEmpty() }?.let { "<br>⚠ " + StringUtil.escapeXmlEntities(it) } ?: "")
+        }
+        root.add(DefaultMutableTreeNode(Item("Since ${c.str("label")}", baseDesc,
+            if (bases.any { it.str("error").isNotEmpty() }) AllIcons.General.Warning else AllIcons.Vcs.Branch,
+            "<html>$baseTip<br><br>Double-click to compare with another branch or commit</html>", open = { chooseBase() })))
+        // what you changed first, then what it did to the pipelines
+        val files = c.list("files")
+        if (files.isNotEmpty()) {
+            val group = DefaultMutableTreeNode(Item("Files changed (${files.size})", icon = AllIcons.Actions.ListChanges, expand = true))
+            for (f in files) {
+                val parts = mutableListOf(f.str("status"))
+                f.int("pipelines").takeIf { it > 0 }?.let { parts += "$it pipeline${if (it == 1) "" else "s"} use it" }
+                f.list("new").size.takeIf { it > 0 }?.let { parts += "+$it new" }
+                f.list("fixed").size.takeIf { it > 0 }?.let { parts += "$it fixed" }
+                val path = f.str("filePath")
+                val node = DefaultMutableTreeNode(Item(f.str("relativePath"), parts.joinToString(" · "), AllIcons.FileTypes.Yaml,
+                    data = f, open = if (f.str("status") != "deleted") ({ service.openFile(path) }) else null))
+                f.list("new").forEach { node.add(problemNode(it)) }
+                f.list("fixed").forEach { node.add(problemNode(it, fixed = true)) }
+                group.add(node)
+            }
+            root.add(group)
+        }
+        val newErrors = c.int("newErrors")
+        root.add(DefaultMutableTreeNode(Item(c.str("summary"), "${c.int("allFailing")} of ${c.int("allPipelines")} fail in total",
+            if (newErrors > 0) AllIcons.General.Error else AllIcons.General.InspectionsOK,
+            "<html>What your changes did to the pipelines below<br><br>In total, ${c.int("allFailing")} of ${c.int("allPipelines")} pipelines fail when queued, " +
+                "counting problems that were there before your changes.<br>Double-click to see every pipeline</html>", open = { onlyMyChanges = false; reload() })))
+        for (p in c.list("pipelines")) {
+            val path = p.str("filePath")
+            val now = p.get("now").obj()
+            val before = p.get("before").obj()
+            fun state(v: JsonObject?, gone: String) =
+                if (v?.get("exists")?.asBoolean == true) "${v.int("errors")} error(s), ${v.int("warnings")} warning(s)" else gone
+            val exists = now?.get("exists")?.asBoolean == true
+            val node = DefaultMutableTreeNode(Item(p.str("relativePath"), p.str("title"), verdictIcon(now?.str("verdict") ?: ""),
+                "<html>Before: ${state(before, "did not exist")}<br>Now: ${state(now, "removed")}</html>",
+                data = p, open = if (exists) ({ service.openFile(path) }) else null))
+            val news = p.list("new")
+            val fixed = p.list("fixed")
+            val changed = p.get("changed").arr().map { it.asString }
+            if (news.isNotEmpty()) node.add(DefaultMutableTreeNode(Item("New (${news.size})", icon = AllIcons.General.Add)).apply { news.forEach { add(problemNode(it)) } })
+            if (fixed.isNotEmpty()) node.add(DefaultMutableTreeNode(Item("Fixed (${fixed.size})", icon = AllIcons.General.InspectionsOK)).apply { fixed.forEach { add(problemNode(it, fixed = true)) } })
+            if (changed.isNotEmpty()) node.add(DefaultMutableTreeNode(Item("Files you changed that it uses (${changed.size})", icon = AllIcons.Actions.Diff)).apply {
+                changed.forEach { add(DefaultMutableTreeNode(Item(it, icon = AllIcons.FileTypes.Yaml))) }
+            })
+            root.add(node)
+        }
+    }
+
 }
 
 // ── Repositories ──────────────────────────────────────────────────────────
