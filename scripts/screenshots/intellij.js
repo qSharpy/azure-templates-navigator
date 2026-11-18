@@ -337,7 +337,7 @@ const SHOTS = {
   },
   // A quick fix: "did you mean".
   quickFixes: async () => {
-    await ide(`openAt("extends/teams/search/azure-pipelines.yml", "dependson:");`);
+    await ide(`openAt("extends/teams/search/azure-pipelines.yml", "dependOn:");`);
     await until(ERROR_AT_CARET);
     await sleep(1000);
     const line = await boxOf(`editorBox(3, 6, 440, 0)`);

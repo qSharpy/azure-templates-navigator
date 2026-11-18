@@ -213,10 +213,17 @@ func parseValueList(lines []string, keyLine, end int, inline string) []string {
 	return out
 }
 
-// ParamByName returns a declared parameter by name.
+// ParamByName returns a declared parameter by name. Azure matches parameter
+// names case-insensitively, so a name that differs only in case finds the
+// declaration too (an exact match wins).
 func ParamByName(params []Param, name string) (Param, bool) {
 	for _, p := range params {
 		if p.Name == name {
+			return p, true
+		}
+	}
+	for _, p := range params {
+		if strings.EqualFold(p.Name, name) {
 			return p, true
 		}
 	}

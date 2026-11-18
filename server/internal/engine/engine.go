@@ -644,6 +644,17 @@ func (e *Engine) relink(p string, checkTargets bool) {
 	}
 	if !sameEdges(old, e.forward[p]) || oldSig != e.snaps[p].sig {
 		e.version++
+		// Which pipelines reach a template changes the template's own
+		// diagnostics (reachedByPipeline), all the way down.
+		var starts []string
+		for _, eds := range [][]edge{old, e.forward[p]} {
+			for _, ed := range eds {
+				if ed.target != "" {
+					starts = append(starts, ed.target)
+				}
+			}
+		}
+		e.invalidateDescendants(starts)
 	}
 	if !checkTargets {
 		return
@@ -704,6 +715,27 @@ func (e *Engine) invalidateWithAncestors(p string) {
 			if !seen[c] {
 				seen[c] = true
 				queue = append(queue, c)
+			}
+		}
+	}
+}
+
+// invalidateDescendants invalidates the diagnostics of the given files and of
+// every file they reach.
+func (e *Engine) invalidateDescendants(starts []string) {
+	seen := map[string]bool{}
+	queue := append([]string(nil), starts...)
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		e.invalidateDiag(cur)
+		for _, ed := range e.forward[cur] {
+			if ed.target != "" && !seen[ed.target] {
+				queue = append(queue, ed.target)
 			}
 		}
 	}

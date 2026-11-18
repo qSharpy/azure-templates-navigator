@@ -40,6 +40,20 @@ type CallSite struct {
 	Flow *FlowMapping
 }
 
+// Lookup returns the parameter passed under name. Like ParamByName it
+// ignores case, preferring an exact match.
+func (cs CallSite) Lookup(name string) (PassedParam, bool) {
+	if pp, ok := cs.Passed[name]; ok {
+		return pp, true
+	}
+	for _, n := range cs.Order {
+		if strings.EqualFold(n, name) {
+			return cs.Passed[n], true
+		}
+	}
+	return PassedParam{}, false
+}
+
 // Unknowable reports whether the passed parameters cannot be determined
 // statically (they are forwarded through an expression).
 func (cs CallSite) Unknowable() bool { return cs.EachPassthrough || cs.Forwarded }

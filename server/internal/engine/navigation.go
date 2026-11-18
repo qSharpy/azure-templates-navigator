@@ -155,7 +155,7 @@ func (e *Engine) paramUsages(tpl, name string, includeDecl bool) UsageResult {
 		}
 	}
 	for _, r := range pipeline.FindParamRefs(tf.lines) {
-		if r.Name == name {
+		if strings.EqualFold(r.Name, name) {
 			res.Usages = append(res.Usages, e.usage(tpl, r.Line, r.NameStart, r.NameEnd))
 		}
 	}
@@ -164,8 +164,8 @@ func (e *Engine) paramUsages(tpl, name string, includeDecl bool) UsageResult {
 		if cf == nil {
 			continue
 		}
-		if pp, ok := pipeline.ParseCallSite(cf.lines, cs.ref.Line).Passed[name]; ok {
-			res.Usages = append(res.Usages, e.usage(cs.path, pp.Line, pp.NameCol, pp.NameCol+len(name)))
+		if pp, ok := pipeline.ParseCallSite(cf.lines, cs.ref.Line).Lookup(name); ok {
+			res.Usages = append(res.Usages, e.usage(cs.path, pp.Line, pp.NameCol, pp.NameCol+len(pp.Name)))
 		}
 	}
 	return res

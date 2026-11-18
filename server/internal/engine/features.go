@@ -435,7 +435,7 @@ func (e *Engine) Complete(path string, line, col int) []CompletionItem {
 			item.Detail += " (required)"
 			item.SortText = "0_" + p.Name
 		}
-		if _, passed := cs.Passed[p.Name]; passed {
+		if _, passed := cs.Lookup(p.Name); passed {
 			item.Detail += " (already set)"
 			item.SortText = "2_" + p.Name
 		}

@@ -30,6 +30,7 @@ const (
 	CodeRepoUnavailable = "repository-unavailable"
 	CodeRepoFetching    = "repository-fetching"
 	CodeUndeclaredParam = "undeclared-param"
+	CodeParamCasing     = "param-casing"
 )
 
 // Source is the diagnostic source shown in IDEs.
@@ -157,6 +158,28 @@ func (e *Engine) computeDiagnostics(path string) []Diagnostic {
 
 func refRange(r pipeline.TemplateRef) (int, int) { return r.ValueCol, r.ValueEnd }
 
+// reachedByPipeline reports whether a root pipeline reaches path through
+// template references. Caller holds e.mu.
+func (e *Engine) reachedByPipeline(path string) bool {
+	seen := map[string]bool{path: true}
+	queue := []string{path}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for c := range e.reverse[cur] {
+			if seen[c] {
+				continue
+			}
+			if e.isRootPipeline(c) {
+				return true
+			}
+			seen[c] = true
+			queue = append(queue, c)
+		}
+	}
+	return false
+}
+
 func (e *Engine) checkCallSite(f *fileInfo, r pipeline.TemplateRef) []Diagnostic {
 	res := e.resolve(r, f)
 	vs, ve := refRange(r)
@@ -169,7 +192,12 @@ func (e *Engine) checkCallSite(f *fileInfo, r pipeline.TemplateRef) []Diagnostic
 	case KindUnknownAlias:
 		sev := SevError
 		if !f.isPipeline {
-			// templates get aliases from whichever pipeline consumes them
+			// Templates get aliases from whichever pipeline consumes them.
+			// When a pipeline reaches this one, its repository-not-declared
+			// says so on the pipeline; this is for templates nothing runs.
+			if e.reachedByPipeline(f.path) {
+				return nil
+			}
 			sev = SevWarning
 		}
 		return []Diagnostic{mk(sev, CodeUnknownAlias, fmt.Sprintf("Repository alias '@%s' is not declared in resources.repositories", res.Alias))}
@@ -229,7 +257,7 @@ func (e *Engine) checkCallSite(f *fileInfo, r pipeline.TemplateRef) []Diagnostic
 		if !p.Required {
 			continue
 		}
-		if _, ok := cs.Passed[p.Name]; ok {
+		if _, ok := cs.Lookup(p.Name); ok {
 			continue
 		}
 		d := mk(SevError, CodeMissingRequired, fmt.Sprintf("Missing required parameter '%s' (type: %s) for template '%s'", p.Name, typeLabel(p.Type), tref))
@@ -255,6 +283,10 @@ func (e *Engine) checkCallSite(f *fileInfo, r pipeline.TemplateRef) []Diagnostic
 			}
 			out = append(out, d)
 			continue
+		}
+		if decl.Name != name {
+			out = append(out, casingDiag(pp.Line, pp.NameCol, name, decl.Name, r.Line,
+				fmt.Sprintf("Parameter '%s' is declared as '%s' in template '%s'. Azure matches parameter names case-insensitively, so this works, but the casing differs", name, decl.Name, tref)))
 		}
 		if pp.IsBlock || pp.Value == "" || pipeline.IsExpression(pp.Value) {
 			continue
@@ -291,9 +323,13 @@ func checkUnused(f *fileInfo) []Diagnostic {
 	if usage.UsesAll {
 		return nil
 	}
+	used := map[string]bool{}
+	for n := range usage.Names {
+		used[strings.ToLower(n)] = true
+	}
 	var out []Diagnostic
 	for _, p := range f.params {
-		if usage.Names[p.Name] {
+		if used[strings.ToLower(p.Name)] {
 			continue
 		}
 		out = append(out, Diagnostic{Line: p.Line, StartCol: p.NameCol, EndLine: p.Line, EndCol: p.NameCol + len(p.Name),
@@ -312,14 +348,18 @@ func checkUndeclared(f *fileInfo, passed map[string]bool) []Diagnostic {
 	}
 	declared := map[string]bool{}
 	for n := range passed {
-		declared[n] = true
+		declared[strings.ToLower(n)] = true
 	}
 	for _, p := range f.params {
-		declared[p.Name] = true
+		declared[strings.ToLower(p.Name)] = true
 	}
 	var out []Diagnostic
 	for _, r := range pipeline.FindParamRefs(f.lines) {
-		if declared[r.Name] {
+		if declared[strings.ToLower(r.Name)] {
+			if p, ok := pipeline.ParamByName(f.params, r.Name); ok && p.Name != r.Name {
+				out = append(out, casingDiag(r.Line, r.NameStart, r.Name, p.Name, 0,
+					fmt.Sprintf("Parameter '%s' is declared as '%s'. Azure matches parameter names case-insensitively, so this works, but the casing differs", r.Name, p.Name)))
+			}
 			continue
 		}
 		d := Diagnostic{Line: r.Line, StartCol: r.NameStart, EndLine: r.Line, EndCol: r.NameEnd,
@@ -358,6 +398,14 @@ func (e *Engine) legacyPassed(f *fileInfo) map[string]bool {
 	return out
 }
 
+// casingDiag is the note for a parameter name written in a different case
+// than its declaration. It is information, not a warning: Azure matches
+// parameter names case-insensitively, so the run is not affected.
+func casingDiag(line, col int, name, declared string, templateLine int, msg string) Diagnostic {
+	return Diagnostic{Line: line, StartCol: col, EndLine: line, EndCol: col + len(name), Severity: SevInfo, Code: CodeParamCasing,
+		templateLine: templateLine, param: name, suggestions: []string{declared}, Message: msg}
+}
+
 func refLabel(ref string) string {
 	if ref == "" {
 		return "default branch"
@@ -380,7 +428,7 @@ func suggest(name string, params []pipeline.Param, cs pipeline.CallSite) []strin
 	}
 	var cands []cand
 	for _, p := range params {
-		if _, passed := cs.Passed[p.Name]; passed {
+		if _, passed := cs.Lookup(p.Name); passed {
 			continue
 		}
 		d := levenshtein(strings.ToLower(name), strings.ToLower(p.Name))

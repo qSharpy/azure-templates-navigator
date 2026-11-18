@@ -125,6 +125,22 @@ func TestIncrementalRelinkMatchesFullRebuild(t *testing.T) {
 			e.FileChanged(newT)
 		}},
 		{"close the edited template", func() { delete(open, build); e.CloseDocument(build) }},
+		// a template's own unknown-repository-alias depends on whether a
+		// pipeline reaches it, through any number of templates
+		{"template chain nothing runs", func() {
+			write(t, root, "lib/a.yml", "steps:\n  - template: b.yml\n")
+			write(t, root, "lib/b.yml", "steps:\n  - template: x.yml@ghost\n")
+			e.FileChanged(filepath.Join(root, "lib/a.yml"))
+			e.FileChanged(filepath.Join(root, "lib/b.yml"))
+		}},
+		{"pipeline starts calling the chain", func() {
+			open[pipe] += "  - template: lib/a.yml\n"
+			e.OpenDocument(pipe, open[pipe])
+		}},
+		{"pipeline stops calling the chain", func() {
+			open[pipe] = strings.TrimSuffix(open[pipe], "  - template: lib/a.yml\n")
+			e.OpenDocument(pipe, open[pipe])
+		}},
 	}
 	for _, st := range steps {
 		st.do()

@@ -81,6 +81,11 @@ func (e *Engine) CodeActions(path string, startLine, endLine int) []CodeAction {
 			end := pipeline.BlockEnd(f.lines, d.Line)
 			out = append(out, CodeAction{Title: fmt.Sprintf("Remove unused parameter declaration '%s'", d.param), Diagnostic: dp,
 				Edits: []TextEdit{deleteLines(f.lines, d.Line, end)}})
+		case CodeParamCasing:
+			for _, sg := range d.suggestions {
+				out = append(out, CodeAction{Title: fmt.Sprintf("Change to '%s'", sg), Diagnostic: dp, Preferred: true,
+					Edits: []TextEdit{{StartLine: d.Line, StartCol: d.StartCol, EndLine: d.Line, EndCol: d.EndCol, NewText: sg}}})
+			}
 		case CodeUndeclaredParam:
 			for _, sg := range d.suggestions {
 				out = append(out, CodeAction{Title: fmt.Sprintf("Change to '%s'", sg), Diagnostic: dp, Preferred: true,

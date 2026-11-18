@@ -7,7 +7,7 @@
 #   - build-dotnet.yml is missing its required 'projects'
 #   - 'Releas' is not one of the allowed configurations
 #   - 'staging' is not an allowed environment
-#   - 'dependson' is a typo for 'dependsOn'
+#   - 'dependOn' is a typo for 'dependsOn'
 #   - 'yes' (quoted) is not a boolean
 # ============================================================
 trigger:
@@ -51,7 +51,7 @@ extends:
           environment: staging
           serviceConnection: sc-search
           appName: search-indexer
-          dependson: [Build]
+          dependOn: [Build]
       - stage: Reindex
         dependsOn: Deploy_staging
         jobs:

@@ -164,7 +164,7 @@ const SHOTS = {
   // A quick fix: "did you mean".
   quickFixes: { crop: { x: 0.05, y: 0.15, w: 0.7, h: 0.6 }, settle: 1200, gif: true, async setUp(frame) {
     await cmd('workbench.action.closeSidebar');
-    await open('extends/teams/search/azure-pipelines.yml', 'dependson:', { column: 'match' });
+    await open('extends/teams/search/azure-pipelines.yml', 'dependOn:', { column: 'match' });
     await sleep(1500);
     await frame(600);
     await cmd('editor.action.showHover');

@@ -793,6 +793,7 @@ var problemTypes = map[string][2]string{
 	CodeValueNotAllowed: {"Value not allowed", "A call passes a value outside the parameter's allowed values."},
 	CodeUnusedParam:     {"Unused parameter", "A template declares a parameter it never uses."},
 	CodeUndeclaredParam: {"Undeclared parameter", "A template uses ${{ parameters.x }} without declaring x."},
+	CodeParamCasing:     {"Parameter casing", "A parameter name is written in a different case than its declaration (Azure ignores case)."},
 	CodeTemplateMissing: {"Template not found", "A call points to a template file that doesn't exist."},
 	CodeUnknownAlias:    {"Unknown repository alias", "A call uses @alias without a matching resources.repositories entry."},
 	CodeRepoUnavailable: {"Repository unavailable", "A template comes from a repository that couldn't be fetched or found locally."},

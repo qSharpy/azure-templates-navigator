@@ -43,7 +43,7 @@ Both repositories resolve locally through `samples/.azure-templates-navigator.js
 | `teams/search/azure-pipelines.yml` | 45 | `missing-required-param` (`projects`) |
 | `teams/search/azure-pipelines.yml` | 48 | `value-not-allowed` (`Releas`) |
 | `teams/search/azure-pipelines.yml` | 51 | `value-not-allowed` (`staging`) |
-| `teams/search/azure-pipelines.yml` | 54 | `unknown-param` (`dependson`, did you mean `dependsOn`) |
+| `teams/search/azure-pipelines.yml` | 54 | `unknown-param` (`dependOn`, did you mean `dependsOn`) |
 
 In the `Pipelines:` verdicts printed after the list, `analytics`, both `data` pipelines and
 `search` should be ✗. `payments`, `mobile` and `platform-templates/tests/secure-base-smoke.yml`
