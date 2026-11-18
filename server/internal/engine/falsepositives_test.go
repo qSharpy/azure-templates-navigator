@@ -136,3 +136,49 @@ func TestTemplateAliasLeftToThePipeline(t *testing.T) {
 		t.Errorf("template nothing runs: %+v", ds)
 	}
 }
+
+func TestIgnoreComments(t *testing.T) {
+	root, e := preflightWorkspace(t, map[string]string{
+		"tpl.yml": `
+parameters:
+- name: legacy
+  type: string
+  default: x
+- name: old
+  type: string
+  default: y
+steps:
+- script: echo ${{ parameters.nope }}
+`,
+	})
+	p := filepath.Join(root, "tpl.yml")
+	ds := e.Diagnose(p)
+	unused := withCode(ds, CodeUnusedParam)
+	if len(unused) != 2 {
+		t.Fatalf("unused: %+v", ds)
+	}
+	text := mustRead(t, p)
+	acts := e.CodeActions(p, unused[0].Line, unused[0].Line)
+	text = applyEdits(t, text, actionByTitle(t, acts, "Ignore 'unused-param' on this line").Edits)
+	if !strings.Contains(text, "# atn-ignore unused-param\n- name: legacy") {
+		t.Fatalf("line ignore:\n%s", text)
+	}
+	e.OpenDocument(p, text)
+	ds = e.Diagnose(p)
+	if u := withCode(ds, CodeUnusedParam); len(u) != 1 || u[0].param != "old" {
+		t.Fatalf("after line ignore: %+v", ds)
+	}
+
+	und := withCode(ds, CodeUndeclaredParam)
+	text = applyEdits(t, text, actionByTitle(t, e.CodeActions(p, und[0].Line, und[0].Line), "Ignore 'undeclared-param' in this file").Edits)
+	e.OpenDocument(p, text)
+	und = withCode(e.Diagnose(p), CodeUnusedParam)
+	text = applyEdits(t, text, actionByTitle(t, e.CodeActions(p, und[0].Line, und[0].Line), "Ignore 'unused-param' in this file").Edits)
+	if !strings.HasPrefix(text, "# atn-ignore-file undeclared-param, unused-param\n") {
+		t.Fatalf("file ignore:\n%s", text)
+	}
+	e.OpenDocument(p, text)
+	if ds := e.Diagnose(p); len(ds) != 0 {
+		t.Errorf("everything is acknowledged: %+v", ds)
+	}
+}

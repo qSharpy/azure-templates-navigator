@@ -147,6 +147,15 @@ func (e *Engine) computeDiagnostics(path string) []Diagnostic {
 		out = append(out, checkRuntimeParams(f)...)
 		out = append(out, e.checkPipeline(f)...)
 	}
+	if sup := pipeline.FindSuppressions(f.lines); !sup.Empty() {
+		kept := out[:0]
+		for _, d := range out {
+			if !sup.Ignores(d.Line, d.Code) {
+				kept = append(kept, d)
+			}
+		}
+		out = kept
+	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Line != out[j].Line {
 			return out[i].Line < out[j].Line

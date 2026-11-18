@@ -125,7 +125,8 @@ func TestLSPRoundTrip(t *testing.T) {
 	}
 	cl.call("textDocument/codeAction", map[string]interface{}{"textDocument": map[string]string{"uri": uri},
 		"range": lspRange{Start: position{2, 0}, End: position{2, 0}}, "context": map[string]interface{}{"diagnostics": []interface{}{}}}, &actions)
-	if len(actions) != 1 || !strings.Contains(actions[0].Title, "Add missing parameter 'émoji'") {
+	if len(actions) != 3 || !strings.Contains(actions[0].Title, "Add missing parameter 'émoji'") ||
+		actions[1].Title != "Ignore 'missing-required-param' on this line" || actions[2].Title != "Ignore 'missing-required-param' in this file" {
 		t.Fatalf("actions: %+v", actions)
 	}
 	edit := actions[0].Edit.Changes[uri][0]

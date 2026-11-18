@@ -122,6 +122,7 @@ func (e *Engine) CodeActions(path string, startLine, endLine int) []CodeAction {
 				CommandArgs: []interface{}{RepoRequest{Alias: d.alias, File: path}}, Preferred: true})
 		}
 	}
+	out = append(out, ignoreActions(f, diags, startLine, endLine)...)
 	for tl, ds := range missingByCall {
 		if len(ds) > 1 {
 			out = append(out, CodeAction{Title: fmt.Sprintf("Add all %d missing required parameters", len(ds)),
@@ -129,6 +130,57 @@ func (e *Engine) CodeActions(path string, startLine, endLine int) []CodeAction {
 		}
 	}
 	return out
+}
+
+// ignoreActions offers, for each problem in range, to acknowledge it with an
+// atn-ignore comment on the line above (or added to one already there) or
+// for the whole file. A line inside a block scalar is text, so only the
+// file form works there.
+func ignoreActions(f *fileInfo, diags []Diagnostic, startLine, endLine int) []CodeAction {
+	var out []CodeAction
+	var mask []bool
+	seen := map[string]bool{}
+	for i := range diags {
+		d := &diags[i]
+		if d.Line < startLine || d.Line > endLine || d.Code == "" || d.Code == CodeRepoFetching {
+			continue
+		}
+		if mask == nil {
+			mask = pipeline.BlockScalarMask(f.lines)
+		}
+		if k := fmt.Sprintf("%s\x00%d", d.Code, d.Line); !seen[k] && d.Line < len(f.lines) && !mask[d.Line] {
+			seen[k] = true
+			out = append(out, CodeAction{Title: fmt.Sprintf("Ignore '%s' on this line", d.Code), Diagnostic: d,
+				Edits: []TextEdit{ignoreLineEdit(f.lines, d.Line, d.Code)}})
+		}
+		if k := d.Code; !seen[k] {
+			seen[k] = true
+			out = append(out, CodeAction{Title: fmt.Sprintf("Ignore '%s' in this file", d.Code), Diagnostic: d,
+				Edits: []TextEdit{ignoreFileEdit(f.lines, d.Code)}})
+		}
+	}
+	return out
+}
+
+func ignoreLineEdit(lines []string, line int, code string) TextEdit {
+	if line > 0 {
+		if file, _, ok := pipeline.ParseIgnoreComment(lines[line-1]); ok && !file && pipeline.IsComment(lines[line-1]) {
+			end := len(strings.TrimRight(lines[line-1], " \t\r"))
+			return TextEdit{StartLine: line - 1, StartCol: end, EndLine: line - 1, EndCol: end, NewText: ", " + code}
+		}
+	}
+	indent := lines[line][:pipeline.Indent(lines[line])]
+	return TextEdit{StartLine: line, EndLine: line, NewText: indent + pipeline.IgnoreComment(code) + "\n"}
+}
+
+func ignoreFileEdit(lines []string, code string) TextEdit {
+	for i, l := range lines {
+		if file, _, ok := pipeline.ParseIgnoreComment(l); ok && file {
+			end := len(strings.TrimRight(l, " \t\r"))
+			return TextEdit{StartLine: i, StartCol: end, EndLine: i, EndCol: end, NewText: ", " + code}
+		}
+	}
+	return TextEdit{NewText: "# atn-ignore-file " + code + "\n"}
 }
 
 func yamlScalar(v string) string {
