@@ -236,7 +236,13 @@ async function run() {
   // 11. My changes: an unsaved edit that passes an unknown parameter shows up
   //     as new in the pipeline that has it, with the base named on top and
   //     the big picture under it. Edited in memory, then reverted.
-  {
+  //     The base is pinned to HEAD (uncommitted changes only), so a base picked
+  //     in this checkout (git config branch.<b>.atnBase) can't add problems the
+  //     test doesn't expect; the picked base is put back afterwards.
+  const bases = (await api.request('atn/changeBases', {})) || [];
+  const picked = bases.find(b => b.picked);
+  if (bases.length) await api.request('atn/setChangesBase', { ref: 'HEAD' });
+  try {
     await vscode.commands.executeCommand('azure-templates-navigator.showMyChanges');
     const head = await waitFor(async () => {
       const r = await api.pipelines.getChildren();
@@ -273,6 +279,8 @@ async function run() {
       await vscode.commands.executeCommand('workbench.action.files.revert');
     }
     await vscode.commands.executeCommand('azure-templates-navigator.showAllPipelines');
+  } finally {
+    if (bases.length) await api.request('atn/setChangesBase', { ref: picked ? picked.ref : '' });
   }
 
   // 12. Check in Azure DevOps: off by default. Turned on, My changes offers
