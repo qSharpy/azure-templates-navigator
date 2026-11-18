@@ -57,7 +57,8 @@ type Def struct {
 	Name         string
 	Project      string
 	YAMLFilename string
-	RepoID       string
+	RepoID       string // an Azure Repos id, or "owner/repo" for GitHub
+	RepoType     string // "TfsGit" when empty, or "GitHub"
 }
 
 // Call is a request the fake received.
@@ -211,6 +212,16 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		writeJSON(w, 404, map[string]string{"message": fmt.Sprintf("TF401019: The Git repository with name or identifier %s does not exist or you do not have permissions for the operation you are attempting.", parts[4]), "typeKey": "GitRepositoryNotFoundException"})
+	case len(parts) == 2 && parts[0] == "_apis" && parts[1] == "projects":
+		seen := map[string]bool{}
+		var out []map[string]interface{}
+		for _, d := range s.Defs {
+			if !seen[d.Project] {
+				seen[d.Project] = true
+				out = append(out, map[string]interface{}{"name": d.Project})
+			}
+		}
+		writeJSON(w, 200, map[string]interface{}{"count": len(out), "value": out})
 	case len(parts) == 4 && parts[1] == "_apis" && parts[2] == "build" && parts[3] == "definitions":
 		s.definitions(w, r, parts[0])
 	case len(parts) == 5 && parts[1] == "_apis" && parts[2] == "pipelines" && parts[4] == "preview":
@@ -239,13 +250,19 @@ func (s *Server) definitions(w http.ResponseWriter, r *http.Request, project str
 	q := r.URL.Query()
 	var all []map[string]interface{}
 	for _, d := range s.Defs {
-		if !strings.EqualFold(d.Project, project) || (q.Get("repositoryId") != "" && q.Get("repositoryId") != d.RepoID) {
+		typ := d.RepoType
+		if typ == "" {
+			typ = "TfsGit"
+		}
+		// like Azure: GitHub ids match without regard to case
+		if !strings.EqualFold(d.Project, project) || (q.Get("repositoryId") != "" && !strings.EqualFold(q.Get("repositoryId"), d.RepoID)) ||
+			(q.Get("repositoryType") != "" && !strings.EqualFold(q.Get("repositoryType"), typ)) {
 			continue
 		}
 		all = append(all, map[string]interface{}{
 			"id": d.ID, "name": d.Name, "path": "\\",
 			"process":    map[string]interface{}{"type": 2, "yamlFilename": d.YAMLFilename},
-			"repository": map[string]interface{}{"id": d.RepoID, "type": "TfsGit"},
+			"repository": map[string]interface{}{"id": d.RepoID, "type": typ},
 			"_links":     map[string]interface{}{"web": map[string]interface{}{"href": fmt.Sprintf("%s/%s/%s/_build/definition?definitionId=%d", s.URL, s.Org, project, d.ID)}},
 		})
 	}

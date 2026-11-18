@@ -60,7 +60,7 @@ func (c *Client) Preview(ctx context.Context, project string, definition int, re
 	}
 	var he *HTTPError
 	if errors.As(err, &he) && he.Status == 400 && he.TypeKey == "PipelineValidationException" {
-		if strings.Contains(he.Message, "Could not get the latest source version") {
+		if strings.Contains(he.Message, "Could not get the latest source version") || strings.Contains(he.Message, "Unable to resolve the reference") {
 			return PreviewResult{}, fmt.Errorf("Azure can't read a repository at the version asked for: %s", he.Message)
 		}
 		return PreviewResult{Rejected: true, Problems: ParseProblems(he.Message)}, nil

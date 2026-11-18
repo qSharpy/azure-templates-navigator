@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -127,6 +128,39 @@ func (g Git) OnRemote(ctx context.Context, sha string) bool {
 	return err == nil && strings.TrimSpace(out) != ""
 }
 
+// RemoteBranch returns the branch of remote (as "refs/heads/x") that holds
+// sha, by the remote-tracking branches: the remote's default branch when it
+// does, else main or master, else the first by name. "" when none does.
+func (g Git) RemoteBranch(ctx context.Context, sha, remote string) string {
+	out, err := g.run(ctx, nil, "", "for-each-ref", "--contains", sha, "--format=%(refname)", "refs/remotes/"+remote+"/")
+	if err != nil {
+		return ""
+	}
+	prefix := "refs/remotes/" + remote + "/"
+	var names []string
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		if n := strings.TrimPrefix(strings.TrimSpace(l), prefix); n != "" && n != "HEAD" && n != l {
+			names = append(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	prefer := []string{"main", "master"}
+	if head, err := g.run(ctx, nil, "", "symbolic-ref", "--quiet", prefix+"HEAD"); err == nil {
+		prefer = append([]string{strings.TrimPrefix(strings.TrimSpace(head), prefix)}, prefer...)
+	}
+	for _, want := range prefer {
+		for _, n := range names {
+			if n == want {
+				return "refs/heads/" + n
+			}
+		}
+	}
+	sort.Strings(names)
+	return "refs/heads/" + names[0]
+}
+
 // Push force-pushes refspecs ("<sha>:<ref>", ":<ref>" to delete) to remoteURL.
 // With a token, git authenticates with it (through the environment, never
 // the command line) instead of the user's credential helper; if that fails
@@ -136,8 +170,12 @@ func (g Git) Push(ctx context.Context, remoteURL, token, fallback string, refspe
 	args := append([]string{"push", "--force", "--no-verify", "--quiet"}, append([]string{""}, refspecs...)...)
 	var firstErr error
 	if token != "" {
+		var env []string
+		if IsAzureURL(remoteURL) { // an Azure DevOps token only ever goes to Azure DevOps
+			env = tokenEnv(remoteURL, token)
+		}
 		args[4] = stripUser(remoteURL)
-		_, err := g.run(ctx, tokenEnv(remoteURL, token), "", args...)
+		_, err := g.run(ctx, env, "", args...)
 		if err == nil {
 			return nil
 		}
@@ -209,6 +247,18 @@ func tokenEnv(remoteURL, token string) []string {
 		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, p[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, p[1]))
 	}
 	return env
+}
+
+// IsAzureURL reports whether an https git URL is on Azure DevOps
+// (dev.azure.com or *.visualstudio.com). Only those get an Azure DevOps
+// token.
+func IsAzureURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	return h == "dev.azure.com" || strings.HasSuffix(h, ".visualstudio.com")
 }
 
 // stripUser drops "user@" from an https URL (Azure puts the organization

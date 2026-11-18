@@ -142,9 +142,24 @@ personal access token. The token is kept in memory only. A token in `ATN_AZURE_T
 `SYSTEM_ACCESSTOKEN` in a pipeline, which hasn't been tried yet: the build service needs *Contribute* on the repository to push
 the snapshot).
 
-**What can be checked.** A pipeline is checked when it is in an Azure Repos git repository and an Azure DevOps pipeline uses
-that file. A pipeline with no Azure DevOps pipeline, a GitHub repository, or a file with no origin on `dev.azure.com` is listed
-as *not checked*, with the reason. Runtime parameters with no default get the first allowed value, or one of their type.
+**What can be checked.** A pipeline is checked when an Azure DevOps pipeline uses that file, from an Azure Repos repository or
+from a GitHub repository (through a GitHub service connection). A pipeline with no Azure DevOps pipeline, or whose origin is
+neither on `dev.azure.com` nor on `github.com`, is listed as *not checked*, with the reason. Runtime parameters with no default
+get the first allowed value, or one of their type.
+
+**Pipelines whose YAML lives on GitHub.** The usual setup when the code has moved to GitHub but CI/CD still runs in Azure
+DevOps: the pipelines, their templates and any shared templates repository (`type: github` with an `endpoint:`) are on GitHub,
+and only the pipeline definitions are in Azure DevOps. All of it can be checked. A GitHub remote doesn't say which Azure DevOps organization runs its pipelines, so set
+`repositories.azureDevOpsOrganization` (in the settings, or in a committed `.azure-templates-navigator.json` to share it with
+your team). Without `repositories.azureDevOpsProject`, every project of the organization is searched for pipelines that read the
+repository (up to 100 projects). Then:
+- when only pipeline files changed in that repository, nothing is pushed: each changed file goes in the preview request, and
+  Azure reads the rest of the repository at the base commit (which must be on GitHub);
+- otherwise (a template changed, in the same repository or in a shared templates repository open in the workspace) the snapshot
+  is pushed to `refs/atn/preview/<you>/<branch>` on GitHub **with your own git credentials** (your
+  `origin` remote, so you need write access), and deleted afterwards. Azure DevOps reads it through the pipeline's service
+  connection. A custom ref is not a branch: it starts no Azure Pipelines run and opens no pull request. The Azure DevOps token is never sent
+  to GitHub. The dialog asks again before the first push to GitHub, even if you chose not to be asked for Azure Repos.
 
 If a repository refuses the push (a branch policy, or no permission to create refs), the pipelines that need it say *couldn't
 check* with the server's reason, and the others are still checked. No branch is created instead.
@@ -161,7 +176,7 @@ compiles each pipeline for a manual run, so `${{ if eq(variables['Build.Reason']
 - check every flow of a template (each `${{ if }}` branch, parameter values, the pipelines that don't use it yet): planned
   next;
 - sign in with VS Code's own Microsoft account (only the Azure CLI or a token);
-- check pipelines in GitHub repositories, or templates that live in GitHub;
+- check pipelines on GitHub Enterprise Server or Bitbucket;
 - count changes in a templates repository that isn't open in the workspace;
 - run in Azure Pipelines with `SYSTEM_ACCESSTOKEN`: it should work, but hasn't been tried.
 

@@ -3,6 +3,19 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [2.11.0] — 2026-11-18
+
+### Added
+
+- **Check in Azure DevOps works for pipelines whose YAML lives on GitHub** (an Azure DevOps pipeline reading a GitHub repository through a service connection), including their templates and shared templates repositories on GitHub (`type: github` aliases). Set `repositories.azureDevOpsOrganization`, since a GitHub remote doesn't name it. Without `repositories.azureDevOpsProject`, every project is searched.
+  - When only pipeline files changed in that repository, nothing is pushed: they are sent in the preview request.
+  - Otherwise the snapshot is pushed to `refs/atn/preview/<you>/<branch>` on GitHub with your own git credentials, and deleted afterwards. The Azure DevOps token is never sent to GitHub. The confirmation dialog asks again before the first push to GitHub, even if you chose not to be asked.
+
+### Fixed
+
+- Parameters declared inline, `- { name: env, type: string, default: 'dev', values: [dev, prod] }` (one line or several), were not recognised, so every `${{ parameters.env }}` was reported as an undeclared parameter. *Declare parameter* now writes the inline form when the file uses it.
+- A preview of a ref Azure can't resolve was counted as a rejected pipeline instead of *couldn't check*.
+
 ## [2.10.0] — 2026-11-18
 
 ### Added

@@ -242,7 +242,7 @@ func paramSymbols(lines []string, end int) []*Symbol {
 			}
 			detail += " = " + d
 		}
-		last := BlockEnd(lines, p.Line)
+		last := BlockEnd(lines, p.EntryLine)
 		if last > end {
 			last = end
 		}

@@ -73,13 +73,17 @@ object AzureCheck {
             return
         }
         val props = PropertiesComponent.getInstance(project)
-        val consentKey = "azureTemplatesNavigator.azureConsent.${plan.str("organization")}"
+        // pushing to GitHub (with the user's own credentials) asks again, even
+        // after "Don't ask again" for Azure Repos pushes
+        val github = plan.list("snapshots").any { it.get("github")?.asBoolean == true }
+        val consentKey = "azureTemplatesNavigator.azureConsent.${plan.str("organization")}" + if (github) ".github" else ""
         if (!props.getBoolean(consentKey, false)) {
             val text = buildString {
                 appendLine(plan.str("summary"))
                 for (s in plan.list("snapshots")) {
                     appendLine()
-                    appendLine("Pushed to ${s.str("ref")} in ${s.str("repo")}:")
+                    val where = if (s.get("github")?.asBoolean == true) " (GitHub, with your own git credentials)" else ""
+                    appendLine("Pushed to ${s.str("ref")} in ${s.str("repo")}$where:")
                     s.list("files").forEach { appendLine("    ${it.str("status")} ${it.str("relativePath")}") }
                     if (s.get("unpushedBase")?.asBoolean == true) appendLine("    (the base commit isn't on the server yet: its history is uploaded too)")
                 }

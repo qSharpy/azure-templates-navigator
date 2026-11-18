@@ -84,12 +84,20 @@ The `azure` package knows nothing about the engine. The engine turns its own mod
 ### 5.1 Organization, project and repository
 
 - For each git repository in the workspace (`ChangeBase.Top`), `repos.ParseRemote(origin)` gives org, project and repo for `dev.azure.com/…/_git/…`, `*.visualstudio.com` and `ssh.dev.azure.com:v3/…`. `repositories.azureDevOpsOrganization` / `azureDevOpsProject` fill in what the remote can't tell.
-- A repository whose origin isn't Azure Repos (GitHub, Bitbucket) can't be snapshotted. Its pipelines are reported as *skipped: not on Azure Repos* (H§9.6: out of scope for now).
+- **GitHub** (`github.com` origin; issue #10): the remote names no organization or project. The organization is `repositories.azureDevOpsOrganization`, else the one of the Azure Repos pipelines in the same check, else the plan fails naming the setting. The project is `repositories.azureDevOpsProject`, else every project of the organization (`GET _apis/projects`, at most 100) is searched for definitions; each definition remembers the project it came from, and the preview goes there. Other hosts (GitHub Enterprise Server, Bitbucket) are skipped: *neither on Azure Repos nor on GitHub*.
 - `GET {org}/{project}/_apis/git/repositories/{name}` gives the repository's `id` and `remoteUrl` (the push target).
 
 ### 5.2 Root pipeline → definition
 
-- `GET {org}/{project}/_apis/build/definitions?repositoryId={id}&repositoryType=TfsGit&includeAllProperties=true&api-version=7.1`, paged with `continuationToken`.
+- `GET {org}/{project}/_apis/build/definitions?repositoryId={id}&repositoryType=TfsGit&includeAllProperties=true&api-version=7.1`, paged with `continuationToken`. For GitHub, `repositoryType=GitHub&repositoryId=owner/repo` (Azure matches the id case-insensitively). The listing is filtered again on `repository.type`/`repository.id`.
+
+**GitHub snapshots** (verified 2026-11-18 on the sandbox org, pipeline 4 on `qSharpy/atn-gh-spike`, service connection via OAuth):
+- GitHub accepts pushes to `refs/atn/preview/…`. Preview takes that ref as `self.refName`, and `self.version` pins the base or the snapshot on it.
+- A custom ref push started no run of a pipeline with an all-branches CI trigger. A control branch push did (run 44).
+- `self.version` not reachable from `refName` → 400 `InvalidGitVersionSpec`. A missing ref → `PipelineValidationException` "Unable to resolve the reference", which is an error (no verdict), not a rejection.
+- `self.refName=refs/heads/main` + `version=<base>` + `yamlOverride` works.
+
+So a GitHub repository whose only changes are checked root pipelines pushes nothing: `self` is pinned to the base on the remote branch that holds it (`Git.RemoteBranch`), and the change side sends the root as `yamlOverride`. Otherwise its snapshot is pushed like an Azure Repos one, but to the `origin` remote with the user's own git credentials. `Git.Push` never puts the Azure DevOps token in the environment for a URL that isn't Azure DevOps. The organization comes from the settings, else the check's Azure Repos pipelines, else its Azure Repos repositories (a GitHub pipeline with its templates on Azure Repos). A `type: github` alias whose `name` is a workspace repository's `owner/repo` is snapshotted the same way and passed as an alias override (verified: pipeline 4 with alias `templates` → `qSharpy/atn-gh-templates`; a custom ref + `version` work, errors come as `/stages/deploy.yml@templates (Line …)`, a missing ref is "Could not get the latest source version", no run). The clients' remembered consent is per organization *and* GitHub, so a first GitHub push always asks.
 - Keep definitions with `process.type == 2` (YAML). Normalise `process.yamlFilename`: trim a leading `/`, use `/` separators, compare case-insensitively (Azure Repos paths are case-sensitive, but users type them in the UI). Match it against the pipeline's path relative to the repository top.
 - **Several matches** (CI and PR definitions of one file): use the lowest id and list the others in the result ("also: #12 PR build"). The expansion doesn't depend on the definition, except for its UI variables, and those don't reach `${{ }}` (H§5.6).
 - **No match**: *not registered in Azure*. In 2b, the same pipeline can be checked through a host pipeline (§8.3). In 2a it's reported and skipped.

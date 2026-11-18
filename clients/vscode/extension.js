@@ -383,11 +383,13 @@ async function activate(context) {
         vscode.window.showInformationMessage(`Nothing to check in Azure DevOps.${skipped.length ? ' ' + skipped.join('; ') : ''}`);
         return;
       }
-      const consentKey = `azureConsent:${plan.organization}`;
+      // pushing to GitHub (with the user's own credentials) asks again, even
+      // after "Always" for Azure Repos pushes
+      const consentKey = `azureConsent:${plan.organization}${plan.snapshots.some(s => s.github) ? ':github' : ''}`;
       if (!context.workspaceState.get(consentKey)) {
         const lines = [plan.summary, ''];
         for (const s of plan.snapshots) {
-          lines.push(`Pushed to ${s.ref} in ${s.repo}:`);
+          lines.push(`Pushed to ${s.ref} in ${s.repo}${s.github ? ' (GitHub, with your own git credentials)' : ''}:`);
           for (const f of s.files) lines.push(`  ${f.status} ${f.relativePath}`);
           if (s.unpushedBase) lines.push('  (the base commit isn\'t on the server yet: its history is uploaded too)');
         }

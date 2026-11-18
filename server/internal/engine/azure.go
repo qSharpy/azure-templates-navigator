@@ -48,6 +48,9 @@ type AzurePlanPipeline struct {
 	RelativePath string           `json:"relativePath"`
 	Definition   *AzureDefinition `json:"definition,omitempty"`
 	Skip         string           `json:"skip,omitempty"`
+	// YAMLOverride: the changed file is sent in the preview request
+	// (yamlOverride) instead of being pushed.
+	YAMLOverride bool `json:"yamlOverride,omitempty"`
 }
 
 // AzurePlanFile is a file a snapshot uploads.
@@ -64,6 +67,9 @@ type AzurePlanSnapshot struct {
 	Base         string          `json:"base"` // commit
 	Files        []AzurePlanFile `json:"files"`
 	UnpushedBase bool            `json:"unpushedBase"` // the base may not be on the server: its history is uploaded too
+	// GitHub: the repository is on GitHub and is pushed to with the user's
+	// own git credentials.
+	GitHub bool `json:"github,omitempty"`
 }
 
 // AzurePlan is what a check will do, shown for consent before anything is
@@ -104,9 +110,10 @@ func (p *AzurePlan) Checkable() int {
 
 type azRepo struct {
 	top       string
-	name      string // Azure repository name
+	name      string // Azure repository name, or the GitHub "owner/repo"
 	project   string
-	remoteURL string // Azure's, the push target
+	github    string // "owner/repo" when its origin is on GitHub
+	remoteURL string // the push target: Azure's URL, or the GitHub origin (without credentials)
 	origin    string // the local remote's URL, when it is the same repository
 	base      string
 	branch    string
@@ -116,6 +123,11 @@ type azRepo struct {
 	unpushed  bool
 	snapshot  string // commit, once pushed
 	refused   string // why the push was refused: its pipelines can't be checked
+	// override: nothing is pushed. Only checked root pipelines changed, so
+	// their text goes in the request (yamlOverride) and self is pinned to
+	// the base, on selfRef (the remote branch that holds it).
+	override bool
+	selfRef  string
 }
 
 type azAlias struct {
@@ -126,7 +138,10 @@ type azAlias struct {
 
 type azPipe struct {
 	path, rel string
+	topRel    string  // relative to its repository top, forward slashes
 	repo      *azRepo // its own repository
+	project   string  // the Azure DevOps project of its definition
+	text      string  // its changed text, sent as yamlOverride (repo.override)
 	def       AzureDefinition
 	aliases   map[string]*azAlias
 	params    map[string]interface{}
@@ -429,6 +444,7 @@ func (e *Engine) AzurePlan(ctx context.Context, opt AzureOptions) (*AzurePlan, e
 
 	// Azure: organization, project, repositories, definitions
 	skip := map[*azPipe]string{}
+	var ghPipes []*azPipe
 	for _, pp := range plan.pipes {
 		if pp.repo == nil {
 			skip[pp] = "not in a git repository"
@@ -439,8 +455,14 @@ func (e *Engine) AzurePlan(ctx context.Context, opt AzureOptions) (*AzurePlan, e
 			continue
 		}
 		rm, ok := repos.ParseRemote(repos.OriginURL(pp.repo.top))
+		if gh := githubRepo(rm, ok); gh != "" {
+			// Azure DevOps reads it through a GitHub service connection
+			pp.repo.github, pp.repo.name = gh, gh
+			ghPipes = append(ghPipes, pp)
+			continue
+		}
 		if !ok || rm.Host != "dev.azure.com" {
-			skip[pp] = "its repository isn't on Azure Repos"
+			skip[pp] = "its repository is neither on Azure Repos nor on GitHub"
 			continue
 		}
 		if plan.org == "" {
@@ -452,12 +474,38 @@ func (e *Engine) AzurePlan(ctx context.Context, opt AzureOptions) (*AzurePlan, e
 		}
 		pp.repo.name, pp.repo.project = unescape(rm.Repo), unescape(rm.Project)
 	}
+	// GitHub: the remote doesn't say which organization runs its pipelines.
+	// The settings do, else the Azure Repos pipelines or repositories of
+	// this check (a GitHub pipeline with its templates on Azure Repos).
+	if len(ghPipes) > 0 {
+		org := s.Repositories.AzureDevOpsOrganization
+		if org == "" {
+			org = plan.org
+		}
+		if org == "" {
+			org = azureReposOrg(plan.repos)
+		}
+		switch {
+		case org == "":
+			return nil, fmt.Errorf("%s is on GitHub, and atn can't tell which Azure DevOps organization runs its pipelines. "+
+				"Set 'repositories.azureDevOpsOrganization' (and 'repositories.azureDevOpsProject' to look in one project only)", ghPipes[0].repo.github)
+		case plan.org != "" && !strings.EqualFold(org, plan.org):
+			for _, pp := range ghPipes {
+				skip[pp] = "in another organization (" + org + ")"
+			}
+		default:
+			plan.org = org
+		}
+	}
 	// changed repositories reached only through an alias
 	for _, rp := range plan.repos {
 		if rp.name != "" || len(rp.changes) == 0 {
 			continue
 		}
-		if rm, ok := repos.ParseRemote(repos.OriginURL(rp.top)); ok && rm.Host == "dev.azure.com" && (plan.org == "" || strings.EqualFold(plan.org, rm.Org)) {
+		rm, ok := repos.ParseRemote(repos.OriginURL(rp.top))
+		if gh := githubRepo(rm, ok); gh != "" {
+			rp.github, rp.name = gh, gh // a GitHub templates repository (`type: github` alias)
+		} else if ok && rm.Host == "dev.azure.com" && (plan.org == "" || strings.EqualFold(plan.org, rm.Org)) {
 			rp.name, rp.project = unescape(rm.Repo), unescape(rm.Project)
 		}
 	}
@@ -465,7 +513,7 @@ func (e *Engine) AzurePlan(ctx context.Context, opt AzureOptions) (*AzurePlan, e
 		if len(plan.pipes) == 0 {
 			return nil, errors.New("your changes reach no pipeline")
 		}
-		return nil, errors.New("none of the pipelines your changes reach is in an Azure Repos repository")
+		return nil, errors.New("none of the pipelines your changes reach is in an Azure Repos or GitHub repository")
 	}
 	plan.Organization = plan.org
 	plan.client = azure.NewClient(plan.org, e.azureTokens(s))
@@ -477,8 +525,11 @@ func (e *Engine) AzurePlan(ctx context.Context, opt AzureOptions) (*AzurePlan, e
 	plan.User = me.Name
 
 	defsByRepo := map[*azRepo][]azure.Definition{}
+	if err := e.githubDefinitions(ctx, plan, s, me.ID, ghPipes, skip, defsByRepo); err != nil {
+		return nil, err
+	}
 	for _, rp := range plan.repos {
-		if rp.name == "" {
+		if rp.name == "" || rp.github != "" {
 			continue
 		}
 		info, err := plan.client.Repository(ctx, rp.project, rp.name)
@@ -509,14 +560,22 @@ func (e *Engine) AzurePlan(ctx context.Context, opt AzureOptions) (*AzurePlan, e
 			skip[pp] = "Azure DevOps doesn't know its repository"
 			continue
 		}
-		if plan.project == "" {
-			plan.project = pp.repo.project
-		}
 		rel, _ := filepath.Rel(pp.repo.top, pp.path)
-		m := azure.MatchDefinitions(defsByRepo[pp.repo], filepath.ToSlash(rel))
+		pp.topRel = filepath.ToSlash(rel)
+		m := azure.MatchDefinitions(defsByRepo[pp.repo], pp.topRel)
 		if len(m) == 0 {
 			skip[pp] = "not registered in Azure DevOps"
+			if pp.repo.github != "" {
+				skip[pp] = fmt.Sprintf("no YAML pipeline in %s reads it from GitHub repository %s", plan.org, pp.repo.github)
+			}
 			continue
+		}
+		pp.project = m[0].Project
+		if pp.project == "" {
+			pp.project = pp.repo.project
+		}
+		if plan.project == "" {
+			plan.project = pp.project
 		}
 		pp.def = AzureDefinition{ID: m[0].ID, Name: m[0].Name, URL: m[0].WebURL, Others: []int{}}
 		for _, o := range m[1:] {
@@ -542,10 +601,12 @@ func (e *Engine) AzurePlan(ctx context.Context, opt AzureOptions) (*AzurePlan, e
 			}
 		}
 	}
+	plan.overrides(ctx, used, skip)
 	for rp := range used {
 		g := azure.Git{Path: plan.gitPath, Dir: rp.top}
 		rp.unpushed = !g.OnRemote(ctx, rp.base)
-		plan.Snapshots = append(plan.Snapshots, AzurePlanSnapshot{Repo: rp.name, RemoteURL: rp.remoteURL, Ref: rp.ref, Base: rp.base, Files: rp.files, UnpushedBase: rp.unpushed})
+		plan.Snapshots = append(plan.Snapshots, AzurePlanSnapshot{Repo: rp.name, RemoteURL: rp.remoteURL, Ref: rp.ref, Base: rp.base, Files: rp.files,
+			UnpushedBase: rp.unpushed, GitHub: rp.github != ""})
 	}
 	sort.Slice(plan.Snapshots, func(i, j int) bool { return plan.Snapshots[i].Repo < plan.Snapshots[j].Repo })
 	for _, pp := range plan.pipes {
@@ -553,6 +614,7 @@ func (e *Engine) AzurePlan(ctx context.Context, opt AzureOptions) (*AzurePlan, e
 		if p.Skip == "" {
 			d := pp.def
 			p.Definition = &d
+			p.YAMLOverride = pp.text != ""
 		}
 		plan.Pipelines = append(plan.Pipelines, p)
 	}
@@ -574,6 +636,15 @@ func (p *AzurePlan) summary() string {
 			repos = append(repos, s.Repo)
 		}
 		parts = append(parts, fmt.Sprintf("push %d changed YAML file%s to %s in %s", files, plural(files), p.Snapshots[0].Ref, strings.Join(repos, ", ")))
+		for _, s := range p.Snapshots {
+			if s.GitHub {
+				parts[len(parts)-1] += " (GitHub, with your own git credentials)"
+				break
+			}
+		}
+	}
+	if o := p.overridden(); o > 0 {
+		parts = append(parts, fmt.Sprintf("send %d changed pipeline file%s in the preview request (nothing is pushed for %s)", o, plural(o), map[bool]string{true: "it", false: "them"}[o == 1]))
 	}
 	parts = append(parts, fmt.Sprintf("ask %s/%s to compile %d pipeline%s at %s and with your changes (%d previews, no run is created)", p.Organization, p.Project, n, plural(n), p.Base, 2*n))
 	if len(p.Snapshots) > 0 && !p.keepRefs {
@@ -622,14 +693,18 @@ func unescape(s string) string {
 // sameRepo: the alias declares the repository the local folder is a clone
 // of (its origin), so a snapshot of the folder is that repository's change.
 func sameRepo(d pipeline.RepoDecl, top string) bool {
+	rm, ok := repos.ParseRemote(repos.OriginURL(top))
+	name := strings.Trim(strings.TrimSuffix(d.Name, ".git"), "/")
+	if strings.EqualFold(d.Type, "github") {
+		gh := githubRepo(rm, ok)
+		return gh != "" && strings.EqualFold(name, gh)
+	}
 	if d.Type != "" && d.Type != "git" {
 		return false
 	}
-	rm, ok := repos.ParseRemote(repos.OriginURL(top))
 	if !ok || rm.Host != "dev.azure.com" {
 		return false
 	}
-	name := strings.Trim(strings.TrimSuffix(d.Name, ".git"), "/")
 	repo := name
 	if i := strings.LastIndex(name, "/"); i >= 0 {
 		repo = name[i+1:]
@@ -790,9 +865,12 @@ func (e *Engine) AzureRun(ctx context.Context, plan *AzurePlan, progress AzurePr
 		}
 		for _, rp := range pushed {
 			cctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			tok, _ := plan.client.Token(cctx)
+			tok := ""
+			if rp.github == "" { // GitHub gets the user's own git credentials
+				tok, _ = plan.client.Token(cctx)
+			}
 			g := azure.Git{Path: plan.gitPath, Dir: rp.top}
-			if err := g.Push(cctx, rp.remoteURL, tok, rp.origin, ":"+rp.ref); err != nil {
+			if err := g.Push(cctx, rp.pushTarget(), tok, rp.origin, ":"+rp.ref); err != nil {
 				rep.Warnings = append(rep.Warnings, fmt.Sprintf("couldn't delete %s in %s: %v", rp.ref, rp.name, err))
 			}
 			cancel()
@@ -814,17 +892,22 @@ func (e *Engine) AzureRun(ctx context.Context, plan *AzurePlan, progress AzurePr
 		if err != nil {
 			return fail(fmt.Errorf("couldn't build the snapshot of %s: %v", rp.name, err))
 		}
-		tok, err := plan.client.Token(ctx)
-		if err != nil {
-			return fail(err)
+		tok := ""
+		if rp.github == "" { // GitHub gets the user's own git credentials
+			if tok, err = plan.client.Token(ctx); err != nil {
+				return fail(err)
+			}
 		}
-		if err := g.Push(ctx, rp.remoteURL, tok, rp.origin, sha+":"+rp.ref); err != nil {
+		if err := g.Push(ctx, rp.pushTarget(), tok, rp.origin, sha+":"+rp.ref); err != nil {
 			if ctx.Err() != nil {
 				return fail(ctx.Err())
 			}
 			// a policy or a permission in this repository: check the
 			// pipelines that don't need it, and say why the others weren't
 			rp.refused = fmt.Sprintf("couldn't push your changes to %s in %s: %v. You need permission to create refs in that repository", rp.ref, rp.name, err)
+			if rp.github != "" {
+				rp.refused = fmt.Sprintf("couldn't push your changes to %s in %s on GitHub: %v. atn pushes there with your own git credentials, so you need write access to the repository", rp.ref, rp.name, err)
+			}
 			rep.Warnings = append(rep.Warnings, rp.refused)
 			done++
 			continue
@@ -963,15 +1046,21 @@ func (e *Engine) azurePreview(ctx context.Context, plan *AzurePlan, pp *azPipe, 
 		}
 		return rp.snapshot
 	}
+	req := azure.PreviewRequest{Repositories: over, TemplateParameters: pp.params}
 	if pp.repo.snapshot != "" {
 		over["self"] = azure.RepoOverride{RefName: pp.repo.ref, Version: version(pp.repo)}
+	} else if pp.repo.override {
+		over["self"] = azure.RepoOverride{RefName: pp.repo.selfRef, Version: pp.repo.base}
+		if !before {
+			req.YAMLOverride = pp.text
+		}
 	}
 	for name, a := range pp.aliases {
 		if a.repo != nil && a.repo.snapshot != "" {
 			over[name] = azure.RepoOverride{RefName: a.repo.ref, Version: version(a.repo)}
 		}
 	}
-	res, err := plan.client.Preview(ctx, pp.repo.project, pp.def.ID, azure.PreviewRequest{Repositories: over, TemplateParameters: pp.params})
+	res, err := plan.client.Preview(ctx, pp.project, pp.def.ID, req)
 	if err != nil {
 		return AzureSide{Verdict: "unknown", Error: explainAzureError(err, plan.client, ctx).Error(), Problems: []AzureProblem{}}
 	}
@@ -1177,4 +1266,185 @@ func (e *Engine) azureNote(path string) string {
 		return " · Azure ✗"
 	}
 	return ""
+}
+
+// ---------------------------------------------------------------------------
+// GitHub
+// ---------------------------------------------------------------------------
+
+// githubRepo is "owner/repo" for a github.com remote, else "". Azure DevOps
+// pipelines read such repositories through a GitHub service connection.
+func githubRepo(rm repos.Remote, ok bool) string {
+	if !ok || !strings.EqualFold(rm.Host, "github.com") || rm.Org == "" || rm.Repo == "" {
+		return ""
+	}
+	return rm.Org + "/" + strings.TrimSuffix(rm.Repo, ".git")
+}
+
+// azureReposOrg is the organization of the workspace's Azure Repos
+// repositories in this check (changed ones first), or "".
+func azureReposOrg(rs map[string]*azRepo) string {
+	tops := make([]string, 0, len(rs))
+	for top := range rs {
+		tops = append(tops, top)
+	}
+	sort.Slice(tops, func(i, j int) bool {
+		ci, cj := len(rs[tops[i]].changes) > 0, len(rs[tops[j]].changes) > 0
+		if ci != cj {
+			return ci
+		}
+		return tops[i] < tops[j]
+	})
+	for _, top := range tops {
+		if rm, ok := repos.ParseRemote(repos.OriginURL(top)); ok && rm.Host == "dev.azure.com" {
+			return rm.Org
+		}
+	}
+	return ""
+}
+
+// maxProjectsSearched bounds the search for a GitHub repository's pipelines
+// when no project is set.
+const maxProjectsSearched = 100
+
+// githubDefinitions finds the definitions of the GitHub repositories the
+// checked pipelines live in: in the project set in the settings, else in
+// every project of the organization. It also sets each repository's push
+// target: its origin, with the user's own git credentials.
+func (e *Engine) githubDefinitions(ctx context.Context, plan *AzurePlan, s Settings, userID string, ghPipes []*azPipe, skip map[*azPipe]string, defsByRepo map[*azRepo][]azure.Definition) error {
+	need := map[*azRepo]bool{}
+	for _, pp := range ghPipes {
+		if skip[pp] == "" {
+			need[pp.repo] = true
+		}
+	}
+	for _, rp := range plan.repos {
+		if rp.github != "" {
+			rp.remoteURL = redactURL(repos.OriginURL(rp.top))
+			rp.origin = "origin"
+			rp.ref = azure.RefName(userID, rp.branch)
+		}
+	}
+	if len(need) == 0 {
+		return nil
+	}
+	projects := []string{s.Repositories.AzureDevOpsProject}
+	if projects[0] == "" {
+		all, err := plan.client.Projects(ctx)
+		if err != nil {
+			return explainAzureError(err, plan.client, ctx)
+		}
+		if len(all) > maxProjectsSearched {
+			for _, pp := range ghPipes {
+				if skip[pp] == "" {
+					skip[pp] = fmt.Sprintf("%s has %d projects: set 'repositories.azureDevOpsProject' to the one whose pipelines read %s", plan.org, len(all), pp.repo.github)
+				}
+			}
+			return nil
+		}
+		projects = all
+	}
+	tops := make([]string, 0, len(need))
+	for rp := range need {
+		tops = append(tops, rp.top)
+	}
+	sort.Strings(tops)
+	for _, top := range tops {
+		rp := plan.repos[top]
+		for _, project := range projects {
+			defs, err := plan.client.DefinitionsFor(ctx, project, azure.RepoTypeGitHub, rp.github)
+			if err != nil {
+				if azure.IsAuth(err) && len(projects) == 1 {
+					return explainAzureError(err, plan.client, ctx)
+				}
+				e.Log(fmt.Sprintf("[azure] definitions of %s in %s: %v", rp.github, project, err))
+				continue
+			}
+			defsByRepo[rp] = append(defsByRepo[rp], defs...)
+		}
+		// lowest id first across projects too
+		d := defsByRepo[rp]
+		sort.Slice(d, func(i, j int) bool { return d[i].ID < d[j].ID })
+	}
+	return nil
+}
+
+// overrides takes out of `used` the GitHub repositories that need no push:
+// every change in them is a checked root pipeline (sent as yamlOverride),
+// none of them is used through an alias (aliases only take a ref), and their
+// base is on a remote branch that self can be pinned to. Azure Repos
+// repositories keep their snapshots.
+func (p *AzurePlan) overrides(ctx context.Context, used map[*azRepo]bool, skip map[*azPipe]string) {
+	roots := map[*azRepo]map[string]*azPipe{}
+	viaAlias := map[*azRepo]bool{}
+	for _, pp := range p.pipes {
+		if skip[pp] != "" {
+			continue
+		}
+		if roots[pp.repo] == nil {
+			roots[pp.repo] = map[string]*azPipe{}
+		}
+		roots[pp.repo][pp.topRel] = pp
+		for _, a := range pp.aliases {
+			if a.repo != nil {
+				viaAlias[a.repo] = true
+			}
+		}
+	}
+	for rp := range used {
+		if rp.github == "" || viaAlias[rp] || len(rp.changes) == 0 {
+			continue
+		}
+		onlyRoots := true
+		for _, c := range rp.changes {
+			if c.Deleted || roots[rp][c.Path] == nil {
+				onlyRoots = false
+			}
+		}
+		if !onlyRoots {
+			continue
+		}
+		g := azure.Git{Path: p.gitPath, Dir: rp.top}
+		ref := g.RemoteBranch(ctx, rp.base, "origin")
+		if ref == "" {
+			continue // the base isn't on GitHub: push it
+		}
+		rp.override, rp.selfRef = true, ref
+		for _, c := range rp.changes {
+			roots[rp][c.Path].text = c.Text
+		}
+		delete(used, rp)
+	}
+}
+
+// pushTarget is where a snapshot is pushed: Azure's URL (with the Azure
+// DevOps token), or for GitHub the origin remote itself, so the user's own
+// git setup (pushurl, ssh, credential helper) applies.
+func (rp *azRepo) pushTarget() string {
+	if rp.github != "" {
+		return "origin"
+	}
+	return rp.remoteURL
+}
+
+// overridden is the number of checked pipelines whose changed file goes in
+// the request.
+func (p *AzurePlan) overridden() int {
+	n := 0
+	for _, x := range p.Pipelines {
+		if x.YAMLOverride {
+			n++
+		}
+	}
+	return n
+}
+
+// redactURL drops credentials from a URL (an origin may carry a token).
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }

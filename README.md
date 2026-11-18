@@ -251,7 +251,8 @@ When `REF` can't be found, or shares no commit with `HEAD`, `check` exits with 2
 
 `validate` asks Azure DevOps to compile every pipeline your changes reach, at the base and with your changes, without running
 it ([Check in Azure DevOps](docs/README.md#check-in-azure-devops)). It pushes your changed files to a
-`refs/atn/preview/…` ref first, so it lists what it will send and asks; `--yes` skips the question (required without a terminal).
+`refs/atn/preview/…` ref first (on GitHub with your own git credentials, for pipelines whose YAML lives there: set
+`repositories.azureDevOpsOrganization`), so it lists what it will send and asks; `--yes` skips the question (required without a terminal).
 It exits with 1 when your changes make Azure reject a pipeline, and 2 when it couldn't check one. `--diff` prints how each
 pipeline's expanded YAML changed. Pass `--root` once per repository when your changes span several (the templates repository
 and the one that uses them). It signs in with `az` (`az login` once), or a token in `ATN_AZURE_TOKEN` (or `SYSTEM_ACCESSTOKEN`, not tried in a pipeline yet).

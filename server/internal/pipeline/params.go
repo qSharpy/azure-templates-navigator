@@ -14,17 +14,27 @@ type Param struct {
 	Required    bool     `json:"required"` // no default => required (Azure runtime behaviour)
 	DisplayName string   `json:"displayName,omitempty"`
 	Values      []string `json:"values,omitempty"` // allowed values, when declared
-	Line        int      `json:"line"`             // 0-based line of the `- name:` entry
+	Line        int      `json:"line"`             // 0-based line of the name (the `- name:` entry)
 	NameCol     int      `json:"nameCol"`          // byte column of the name on that line
+
+	// EntryLine is where the entry starts: Line, except for an inline entry
+	// whose name is written on a later line than its `- {`.
+	EntryLine int `json:"-"`
 
 	// Where an inline `default:` value is written (DefaultLine is 0 and the
 	// columns are equal when the default is a block or absent).
 	DefaultLine, DefaultCol, DefaultEnd int `json:"-"`
+
+	// Inline is true for an entry written as a flow mapping
+	// (`- { name: x, type: string, default: 'a' }`), possibly over several
+	// lines.
+	Inline bool `json:"-"`
 }
 
 var (
 	topParamsRe  = regexp.MustCompile(`^parameters\s*:\s*(.*)$`)
 	nameEntryRe  = regexp.MustCompile(`^(\s*)-\s+name\s*:\s*(.*)$`)
+	flowEntryRe  = regexp.MustCompile(`^(\s*)-\s+\{`)
 	propRe       = regexp.MustCompile(`^(\s*)(?:-\s+)?([A-Za-z_][\w]*)\s*:\s*(.*)$`)
 	listItemRe   = regexp.MustCompile(`^\s*-\s+(.*)$`)
 	mapFormKeyRe = regexp.MustCompile(`^(\s*)([A-Za-z_][\w-]*)\s*:\s*(.*)$`)
@@ -41,8 +51,9 @@ func FindTopLevelParameters(lines []string) int {
 }
 
 // ParseParameters parses the top-level `parameters:` block of a template.
-// Both the modern list form (`- name: x`) and the legacy map form
-// (`x: default`) are supported.
+// Both the modern list form (`- name: x`, or inline as
+// `- { name: x, type: string }`) and the legacy map form (`x: default`) are
+// supported.
 func ParseParameters(lines []string) []Param {
 	start := FindTopLevelParameters(lines)
 	if start < 0 {
@@ -83,12 +94,18 @@ func ParseParameters(lines []string) []Param {
 	var params []Param
 	for i := start + 1; i < end; i++ {
 		l := StripComment(lines[i])
+		if fm := flowEntryRe.FindStringSubmatch(l); fm != nil && len(fm[1]) == baseIndent {
+			if p, ok := parseInlineParam(lines, i, len(fm[0])-1, baseIndent, end); ok {
+				params = append(params, p)
+			}
+			continue
+		}
 		m := nameEntryRe.FindStringSubmatch(l)
 		if m == nil || len(m[1]) != baseIndent {
 			continue
 		}
 		name := Unquote(m[2])
-		p := Param{Name: name, Type: "string", Line: i, NameCol: strings.Index(lines[i], name)}
+		p := Param{Name: name, Type: "string", Line: i, EntryLine: i, NameCol: strings.Index(lines[i], name)}
 		if p.NameCol < 0 {
 			p.NameCol = 0
 		}
@@ -139,6 +156,53 @@ func ParseParameters(lines []string) []Param {
 	return params
 }
 
+// parseInlineParam reads a list entry written as a flow mapping whose `{` is
+// at (line, col): `- { name: x, type: string, default: 'a', values: [a, b] }`.
+// The mapping may span lines. An entry without a name is not a parameter.
+func parseInlineParam(lines []string, line, col, baseIndent, end int) (Param, bool) {
+	fm := ParseFlowMapping(lines, line, col, baseIndent)
+	p := Param{Type: "string", Inline: true, Line: -1, EntryLine: line}
+	for _, e := range fm.Entries {
+		if e.ValuePos.Line >= end {
+			break
+		}
+		val := e.Value
+		if e.ValuePos.Line != e.End.Line {
+			val = strings.Join(strings.Fields(val), " ")
+		}
+		switch e.Key {
+		case "name":
+			p.Name = Unquote(val)
+			p.Line = e.ValuePos.Line
+			p.NameCol = e.ValuePos.Col
+			if c := strings.Index(lines[p.Line][e.ValuePos.Col:], p.Name); c >= 0 && p.Name != "" {
+				p.NameCol += c
+			}
+		case "type":
+			p.Type = Unquote(val)
+		case "default":
+			p.HasDefault = true
+			p.Default = val
+			if e.End.Col > e.ValuePos.Col || e.End.Line > e.ValuePos.Line {
+				p.DefaultLine, p.DefaultCol = e.ValuePos.Line, e.ValuePos.Col
+				p.DefaultEnd = e.End.Col
+				if e.End.Line != e.ValuePos.Line {
+					p.DefaultEnd = len(strings.TrimRight(StripComment(lines[e.ValuePos.Line]), " \t"))
+				}
+			}
+		case "displayName":
+			p.DisplayName = Unquote(val)
+		case "values":
+			p.Values = parseValueList(lines, e.ValuePos.Line, end, val)
+		}
+	}
+	if p.Name == "" || p.Line < 0 {
+		return Param{}, false
+	}
+	p.Required = !p.HasDefault
+	return p, true
+}
+
 func parseMapFormParams(lines []string, from, end, baseIndent int) []Param {
 	var params []Param
 	for i := from; i < end; i++ {
@@ -153,7 +217,7 @@ func parseMapFormParams(lines []string, from, end, baseIndent int) []Param {
 		}
 		params = append(params, Param{
 			Name: m[2], Type: "", Default: val, HasDefault: true,
-			Line: i, NameCol: len(m[1]),
+			Line: i, EntryLine: i, NameCol: len(m[1]),
 		})
 	}
 	return params
@@ -233,10 +297,17 @@ func ParamByName(params []Param, name string) (Param, bool) {
 var defaultKeyRe = regexp.MustCompile(`^\s*(?:-\s+)?default\s*:`)
 
 // DefaultKeyLine returns the line of a typed parameter's `default:` key, or
-// -1 (none, or a legacy map-form parameter).
+// -1 (none, or a legacy map-form parameter). For an inline entry it is the
+// line its default value starts on (the value is at DefaultCol there).
 func DefaultKeyLine(lines []string, p Param) int {
 	if p.Type == "" || p.Line < 0 || p.Line >= len(lines) {
 		return -1
+	}
+	if p.Inline {
+		if !p.HasDefault || p.DefaultEnd <= p.DefaultCol {
+			return -1
+		}
+		return p.DefaultLine
 	}
 	for _, i := range MappingSiblings(lines, p.Line) {
 		if defaultKeyRe.MatchString(lines[i]) {

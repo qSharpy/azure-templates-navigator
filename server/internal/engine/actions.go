@@ -78,9 +78,15 @@ func (e *Engine) CodeActions(path string, startLine, endLine int) []CodeAction {
 					Edits: []TextEdit{{StartLine: d.Line, StartCol: d.StartCol, EndLine: d.Line, EndCol: d.EndCol, NewText: yamlScalar(v)}}})
 			}
 		case CodeUnusedParam:
-			end := pipeline.BlockEnd(f.lines, d.Line)
+			start := d.Line
+			for _, p := range f.params {
+				if p.Name == d.param && p.Line == d.Line {
+					start = p.EntryLine // an inline entry may name it on a later line
+				}
+			}
+			end := pipeline.BlockEnd(f.lines, start)
 			out = append(out, CodeAction{Title: fmt.Sprintf("Remove unused parameter declaration '%s'", d.param), Diagnostic: dp,
-				Edits: []TextEdit{deleteLines(f.lines, d.Line, end)}})
+				Edits: []TextEdit{deleteLines(f.lines, start, end)}})
 		case CodeParamCasing:
 			for _, sg := range d.suggestions {
 				out = append(out, CodeAction{Title: fmt.Sprintf("Change to '%s'", sg), Diagnostic: dp, Preferred: true,
@@ -258,13 +264,29 @@ func declareParamEdit(f *fileInfo, name string) TextEdit {
 	} else {
 		ind := 2
 		if len(f.params) > 0 {
-			ind = pipeline.Indent(f.lines[f.params[0].Line])
+			ind = pipeline.Indent(f.lines[f.params[0].EntryLine])
 		}
 		pad, prop := strings.Repeat(" ", ind), strings.Repeat(" ", ind+2)
-		text = "\n" + pad + "- name: " + name + "\n" + prop + "type: string\n" + prop + "default: ''"
+		if allInline(f.params) {
+			// match the file's style: one `- { ... }` line per parameter
+			text = "\n" + pad + "- { name: " + name + ", type: string, default: '' }"
+		} else {
+			text = "\n" + pad + "- name: " + name + "\n" + prop + "type: string\n" + prop + "default: ''"
+		}
 	}
 	eol := len(f.lines[end])
 	return TextEdit{StartLine: end, StartCol: eol, EndLine: end, EndCol: eol, NewText: text}
+}
+
+// allInline reports whether every declared parameter is written inline
+// (`- { name: x, ... }`), and there is at least one.
+func allInline(params []pipeline.Param) bool {
+	for _, p := range params {
+		if !p.Inline {
+			return false
+		}
+	}
+	return len(params) > 0
 }
 
 var (

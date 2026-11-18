@@ -2,7 +2,7 @@
   "name": "azure-templates-navigator",
   "displayName": "Azure Templates Navigator",
   "description": "Hover, validate, autocomplete and navigate Azure Pipelines YAML templates — including templates from other repositories, which are downloaded automatically.",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "publisher": "bogdanbujor",
   "license": "MIT",
   "icon": "logo.png",
@@ -134,12 +134,12 @@
         "azure-templates-navigator.repositories.azureDevOpsOrganization": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Azure DevOps organization hosting `type: git` repositories. Only needed when it can't be inferred from your repository's `origin` remote (e.g. your code lives on GitHub)."
+          "markdownDescription": "Azure DevOps organization hosting `type: git` repositories, and the one *Check in Azure DevOps* uses for pipelines whose YAML lives on GitHub. Only needed when it can't be inferred from your repository's `origin` remote (e.g. your code lives on GitHub)."
         },
         "azure-templates-navigator.repositories.azureDevOpsProject": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Default Azure DevOps project for `type: git` repositories declared without a project (`name: repo`)."
+          "markdownDescription": "Default Azure DevOps project for `type: git` repositories declared without a project (`name: repo`). For pipelines whose YAML lives on GitHub, *Check in Azure DevOps* looks for their definitions in this project only (else in every project)."
         },
         "azure-templates-navigator.repositories.githubEnterpriseHost": {
           "type": "string",

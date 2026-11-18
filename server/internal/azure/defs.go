@@ -37,6 +37,7 @@ type Definition struct {
 	RepoID       string `json:"repositoryId"`
 	RepoType     string `json:"repositoryType"`
 	WebURL       string `json:"url"`
+	Project      string `json:"project"` // the project it was listed in
 }
 
 type rawDefinition struct {
@@ -58,16 +59,31 @@ type rawDefinition struct {
 	} `json:"_links"`
 }
 
-// Definitions lists the YAML pipeline definitions of a repository, following
-// continuation tokens.
+// Repository types of a definition (repository.type).
+const (
+	RepoTypeAzure  = "TfsGit"
+	RepoTypeGitHub = "GitHub"
+)
+
+// Definitions lists the YAML pipeline definitions of an Azure Repos
+// repository, following continuation tokens.
 func (c *Client) Definitions(ctx context.Context, project, repoID string) ([]Definition, error) {
+	return c.DefinitionsFor(ctx, project, RepoTypeAzure, repoID)
+}
+
+// DefinitionsFor lists the YAML pipeline definitions of a repository of the
+// given type: an Azure Repos id (RepoTypeAzure) or a GitHub "owner/repo"
+// (RepoTypeGitHub, matched without regard to case). The server filters by
+// repository, and the result is filtered again here, so a server that ignores
+// the filter can't hand back another repository's pipelines.
+func (c *Client) DefinitionsFor(ctx context.Context, project, repoType, repoID string) ([]Definition, error) {
 	var out []Definition
 	token := ""
 	for page := 0; page < 50; page++ {
 		q := url.Values{}
 		q.Set("includeAllProperties", "true")
 		q.Set("repositoryId", repoID)
-		q.Set("repositoryType", "TfsGit")
+		q.Set("repositoryType", repoType)
 		q.Set("$top", "500")
 		if token != "" {
 			q.Set("continuationToken", token)
@@ -83,8 +99,11 @@ func (c *Client) Definitions(ctx context.Context, project, repoID string) ([]Def
 			if d.Process.Type != 2 || d.Process.YAMLFilename == "" {
 				continue // a classic (designer) pipeline
 			}
+			if !strings.EqualFold(d.Repository.Type, repoType) || !strings.EqualFold(d.Repository.ID, repoID) {
+				continue
+			}
 			out = append(out, Definition{ID: d.ID, Name: d.Name, Folder: d.Path, YAMLFilename: d.Process.YAMLFilename,
-				RepoID: d.Repository.ID, RepoType: d.Repository.Type, WebURL: d.Links.Web.Href})
+				RepoID: d.Repository.ID, RepoType: d.Repository.Type, WebURL: d.Links.Web.Href, Project: project})
 		}
 		token = hdr.Get("X-Ms-Continuationtoken")
 		if token == "" {
@@ -113,4 +132,36 @@ func MatchDefinitions(defs []Definition, relPath string) []Definition {
 		}
 	}
 	return out
+}
+
+// Projects lists the names of the organization's projects (at most a few
+// thousand), following continuation tokens.
+func (c *Client) Projects(ctx context.Context) ([]string, error) {
+	var out []string
+	token := ""
+	for page := 0; page < 20; page++ {
+		q := url.Values{}
+		q.Set("$top", "500")
+		if token != "" {
+			q.Set("continuationToken", token)
+		}
+		var resp struct {
+			Value []struct {
+				Name string `json:"name"`
+			} `json:"value"`
+		}
+		var hdr http.Header
+		if err := c.do(ctx, "GET", "_apis/projects", q, nil, &resp, &hdr); err != nil {
+			return nil, err
+		}
+		for _, p := range resp.Value {
+			out = append(out, p.Name)
+		}
+		token = hdr.Get("X-Ms-Continuationtoken")
+		if token == "" {
+			break
+		}
+	}
+	sort.Strings(out)
+	return out, nil
 }
