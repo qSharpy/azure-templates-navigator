@@ -112,6 +112,7 @@
         <tipAndTrick file="AzureTemplates_hoverParameters.html"/>
         <tipAndTrick file="AzureTemplates_completeRequired.html"/>
         <tipAndTrick file="AzureTemplates_quickFixes.html"/>
+        <tipAndTrick file="AzureTemplates_ignoreProblems.html"/>
         <tipAndTrick file="AzureTemplates_findUsages.html"/>
         <tipAndTrick file="AzureTemplates_callHierarchy.html"/>
         <tipAndTrick file="AzureTemplates_templateGraph.html"/>

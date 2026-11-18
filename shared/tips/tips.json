@@ -53,6 +53,14 @@
       "vscodeCommand": "workbench.actions.view.problems"
     },
     {
+      "id": "ignoreProblems",
+      "title": "Keep a known problem quiet",
+      "vscode": "Some problems are on purpose, like a parameter kept only so older callers don't break. Press Ctrl+. (Cmd+. on macOS) on the problem and pick **Ignore '…' on this line** or **Ignore '…' in this file**. It writes an `# atn-ignore` comment that names the problem's code, so nothing else is hidden, and the pipeline's verdict stops counting it. Delete the comment to see the problem again.",
+      "intellij": "Some problems are on purpose, like a parameter kept only so older callers don't break. Press {shortcut:ShowIntentionActions} on the problem and pick **Ignore '…' on this line** or **Ignore '…' in this file**. It writes an `# atn-ignore` comment that names the problem's code, so nothing else is hidden, and the pipeline's verdict stops counting it. Delete the comment to see the problem again.",
+      "example": "# atn-ignore-file undeclared-param\nparameters:\n# kept so v2 callers don't break\n# atn-ignore unused-param\n- name: legacyAgentPool\n  type: string\n  default: ''",
+      "exampleLanguage": "yaml"
+    },
+    {
       "id": "findUsages",
       "title": "Who uses this template?",
       "vscode": "Before you change a template, check who calls it. The \"N usages\" lens above the template lists its call sites, and Find All References (Shift+Alt+F12) works on templates and on their parameters.",

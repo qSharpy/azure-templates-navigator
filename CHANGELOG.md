@@ -3,11 +3,12 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
-## [Unreleased]
+## [2.10.0] — 2026-11-18
 
 ### Added
 
 - **`# atn-ignore <code>`** acknowledges a problem you keep on purpose, on the next line (or at the end of the line it is about); `# atn-ignore-file <code>` for the whole file. Every problem has two quick fixes that write the comment. Ignored problems don't count in verdicts.
+  - A *Keep a known problem quiet* tip in Get Started (VS Code) and Tip of the Day (IntelliJ).
 - **`${{ if }}` branches are decided** with the values a pipeline passes its templates (literals, forwarded `${{ parameters.x }}`, defaults, members of `object` values). A branch Azure skips is no longer checked for that pipeline. A branch that depends on runtime parameters or variables reports what it would break as a warning that names the branch, instead of an error.
 
 ### Changed

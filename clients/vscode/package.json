@@ -2,7 +2,7 @@
   "name": "azure-templates-navigator",
   "displayName": "Azure Templates Navigator",
   "description": "Hover, validate, autocomplete and navigate Azure Pipelines YAML templates — including templates from other repositories, which are downloaded automatically.",
-  "version": "2.9.0",
+  "version": "2.10.0",
   "publisher": "bogdanbujor",
   "license": "MIT",
   "icon": "logo.png",
@@ -628,6 +628,14 @@
             "completionEvents": [
               "onCommand:workbench.actions.view.problems"
             ]
+          },
+          {
+            "id": "ignoreProblems",
+            "title": "Keep a known problem quiet",
+            "description": "Some problems are on purpose, like a parameter kept only so older callers don't break. Press Ctrl+. (Cmd+. on macOS) on the problem and pick **Ignore '…' on this line** or **Ignore '…' in this file**. It writes an \"# atn-ignore\" comment that names the problem's code, so nothing else is hidden, and the pipeline's verdict stops counting it. Delete the comment to see the problem again.",
+            "media": {
+              "markdown": "media/tips/ignoreProblems.md"
+            }
           },
           {
             "id": "findUsages",
