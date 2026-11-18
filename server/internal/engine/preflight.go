@@ -178,25 +178,61 @@ type expansion struct {
 	complete bool
 	dynamic  int // references decided at run time (template: ${{ ... }})
 	declared map[string]bool
+	// ctxs are the parameter values each file is reached with (one entry
+	// per distinct set of values), so ${{ if }} branches can be decided.
+	ctxs map[string][]xctx
+	rel  func(string) string
 }
 
-// expand walks the templates reachable from root. Caller holds e.mu.
+// xctx is one way a file is reached: the parameter values its call passes,
+// and, when the path to it goes through a ${{ if }} whose condition is not
+// known, where that branch is ("file:line").
+type xctx struct {
+	b     pipeline.Bindings
+	guard string
+}
+
+// maxContexts bounds the distinct parameter values tracked per file; past
+// it a file is reached with every value unknown.
+const maxContexts = 8
+
+// expand walks the templates reachable from root. References inside
+// ${{ if }} branches that are certainly not taken with the values passed
+// along the way are not followed. Caller holds e.mu.
 func (e *Engine) expand(root *fileInfo) *expansion {
-	x := &expansion{root: root, via: map[string]pipeline.TemplateRef{}, complete: true, declared: map[string]bool{"self": true}}
-	seen := map[string]bool{root.path: true}
-	queue := []*fileInfo{root}
+	x := &expansion{root: root, via: map[string]pipeline.TemplateRef{}, complete: true, declared: map[string]bool{"self": true},
+		ctxs: map[string][]xctx{}, rel: e.relPath}
+	type item struct {
+		f *fileInfo
+		c xctx
+	}
+	seenCtx := map[string]map[string]bool{root.path: {"": true}}
+	dynamic := map[string]bool{}
+	// A root pipeline's own parameters are filled in when the run is
+	// queued, so they are unknown.
+	start := xctx{b: pipeline.Bindings{}}
+	x.ctxs[root.path] = []xctx{start}
+	x.files = append(x.files, root)
+	queue := []item{{root, start}}
 	for len(queue) > 0 {
-		f := queue[0]
+		it := queue[0]
 		queue = queue[1:]
-		x.files = append(x.files, f)
+		f := it.f
 		// Templates can't declare repositories for the pipeline, but being
 		// lenient here only hides problems, never invents them.
 		for a := range f.repos {
 			x.declared[a] = true
 		}
 		for _, ed := range e.edgesOf(f.path) {
+			live := it.c.live(f, ed.ref.Line)
+			if live == pipeline.False {
+				continue
+			}
 			if ed.res.Kind == KindDynamic {
-				x.dynamic++
+				if k := fmt.Sprintf("%s\x00%d", f.path, ed.ref.Line); !dynamic[k] {
+					dynamic[k] = true
+					x.dynamic++
+				}
 				x.complete = false
 				continue
 			}
@@ -204,36 +240,184 @@ func (e *Engine) expand(root *fileInfo) *expansion {
 				x.complete = false
 				continue
 			}
-			if seen[ed.target] {
-				continue
-			}
-			seen[ed.target] = true
 			tf := e.file(ed.target)
 			if tf == nil {
 				x.complete = false
 				continue
 			}
-			if f == root {
-				x.via[tf.path] = ed.ref
-			} else {
-				x.via[tf.path] = x.via[f.path]
+			c := xctx{b: e.bindingsFor(tf, f, ed.ref, it.c.b), guard: it.c.guard}
+			if c.guard == "" && live == pipeline.Unknown {
+				c.guard = fmt.Sprintf("%s:%d", e.relPath(f.path), f.conditions().Guard(ed.ref.Line, it.c.b)+1)
 			}
-			queue = append(queue, tf)
+			seen := seenCtx[tf.path]
+			if seen == nil {
+				seen = map[string]bool{}
+				seenCtx[tf.path] = seen
+				x.files = append(x.files, tf)
+				if f == root {
+					x.via[tf.path] = ed.ref
+				} else {
+					x.via[tf.path] = x.via[f.path]
+				}
+			}
+			if len(seen) >= maxContexts {
+				c.b = pipeline.Bindings{}
+			}
+			key := c.b.Key()
+			if c.guard != "" {
+				key += "?"
+			}
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			x.ctxs[tf.path] = append(x.ctxs[tf.path], c)
+			queue = append(queue, item{tf, c})
 		}
 	}
 	return x
 }
 
+// live reports whether a line of f is expanded in this context.
+func (c xctx) live(f *fileInfo, line int) pipeline.Tri {
+	t := f.conditions().Live(line, c.b)
+	if c.guard != "" {
+		t = t.And(pipeline.Unknown)
+	}
+	return t
+}
+
+// state reports whether a line of a reached file is expanded in this
+// pipeline: True when it is with some of the values the file is reached
+// with, False when it is with none, Unknown otherwise. For Unknown, guard
+// is the ${{ if }} ("file:line") the answer depends on.
+func (x *expansion) state(f *fileInfo, line int) (t pipeline.Tri, guard string) {
+	t = pipeline.False
+	for _, c := range x.ctxs[f.path] {
+		switch c.live(f, line) {
+		case pipeline.True:
+			return pipeline.True, ""
+		case pipeline.Unknown:
+			if t == pipeline.False {
+				t, guard = pipeline.Unknown, c.guard
+				if guard == "" {
+					guard = fmt.Sprintf("%s:%d", x.rel(f.path), f.conditions().Guard(line, c.b)+1)
+				}
+			}
+		}
+	}
+	return t, guard
+}
+
+// bindingsFor returns the values of tf's parameters for the call ref in f,
+// whose own parameters have the values in outer: literals passed at the
+// call, values forwarded as ${{ parameters.x }}, and defaults. Caller holds
+// e.mu.
+func (e *Engine) bindingsFor(tf, f *fileInfo, ref pipeline.TemplateRef, outer pipeline.Bindings) pipeline.Bindings {
+	b := pipeline.Bindings{}
+	if len(tf.params) == 0 {
+		return b
+	}
+	cs := pipeline.ParseCallSite(f.lines, ref.Line)
+	if cs.Unknowable() {
+		return b
+	}
+	for _, p := range tf.params {
+		if p.Type == "" {
+			continue // a legacy block: values are untyped
+		}
+		name := strings.ToLower(p.Name)
+		if strings.EqualFold(p.Type, "object") {
+			bindObject(b, name, tf, f, cs, p, outer)
+			continue
+		}
+		if pp, passed := cs.Lookup(p.Name); passed {
+			if cs.HasConditionals || pp.IsBlock {
+				continue // passed under an ${{ if }}, or a structured value
+			}
+			if from, ok := pipeline.ForwardedParam(pp.Value); ok {
+				if v, ok := outer[strings.ToLower(from)]; ok && sameType(v, p.Type) {
+					b[name] = v
+				}
+				continue
+			}
+			if v, ok := pipeline.ParseLiteral(p.Type, pp.Value); ok {
+				b[name] = v
+			}
+			continue
+		}
+		if p.HasDefault {
+			if v, ok := pipeline.ParseLiteral(p.Type, p.Default); ok {
+				b[name] = v
+			}
+		}
+	}
+	return b
+}
+
+// bindObject binds the scalar members of an object parameter
+// (`name.key`): from the value passed at the call (a mapping, or a forwarded
+// object of the caller), else from its default.
+func bindObject(b pipeline.Bindings, name string, tf, f *fileInfo, cs pipeline.CallSite, p pipeline.Param, outer pipeline.Bindings) {
+	if pp, passed := cs.Lookup(p.Name); passed {
+		if cs.HasConditionals {
+			return
+		}
+		if from, ok := pipeline.ForwardedParam(pp.Value); ok {
+			prefix := strings.ToLower(from) + "."
+			for k, v := range outer {
+				if strings.HasPrefix(k, prefix) {
+					b[name+"."+k[len(prefix):]] = v
+				}
+			}
+			return
+		}
+		pipeline.ObjectMembers(f.lines, pp.Line, pp.ValueCol, name, b)
+		return
+	}
+	if l := pipeline.DefaultKeyLine(tf.lines, p); l >= 0 {
+		col := len(pipeline.StripComment(tf.lines[l]))
+		if p.DefaultLine == l && p.DefaultEnd > p.DefaultCol {
+			col = p.DefaultCol
+		}
+		pipeline.ObjectMembers(tf.lines, l, col, name, b)
+	}
+}
+
+func sameType(v pipeline.Value, typ string) bool {
+	switch strings.ToLower(typ) {
+	case "boolean":
+		return v.Kind == pipeline.KindBool
+	case "number":
+		return v.Kind == pipeline.KindNumber
+	case "string":
+		return v.Kind == pipeline.KindString
+	}
+	return false
+}
+
 // at places a finding made in file f (line, columns) on the root pipeline:
 // in place when f is the root, otherwise on the call that leads to f, with
-// the template location prepended to the message.
-func (e *Engine) at(x *expansion, f *fileInfo, line, col, end int, sev int, code, msg string) Diagnostic {
+// the template location prepended to the message. ok is false when the line
+// is never expanded in this pipeline. When it depends on a ${{ if }} whose
+// condition is not known, an error becomes a warning that says so.
+func (e *Engine) at(x *expansion, f *fileInfo, line, col, end int, sev int, code, msg string) (d Diagnostic, ok bool) {
+	st, guard := x.state(f, line)
+	if st == pipeline.False {
+		return Diagnostic{}, false
+	}
+	if st == pipeline.Unknown {
+		if sev == SevError {
+			sev = SevWarning
+		}
+		msg += fmt.Sprintf(", if the ${{ }} branch at %s is taken (it depends on values known only when the run is queued)", guard)
+	}
 	if f == x.root {
-		return Diagnostic{Line: line, StartCol: col, EndLine: line, EndCol: end, Severity: sev, Code: code, Message: msg}
+		return Diagnostic{Line: line, StartCol: col, EndLine: line, EndCol: end, Severity: sev, Code: code, Message: msg}, true
 	}
 	r := x.via[f.path]
 	return Diagnostic{Line: r.Line, StartCol: r.ValueCol, EndLine: r.Line, EndCol: r.ValueEnd, Severity: sev, Code: code, templateLine: r.Line,
-		Message: fmt.Sprintf("%s:%d: %s", e.relPath(f.path), line+1, msg)}
+		Message: fmt.Sprintf("%s:%d: %s", e.relPath(f.path), line+1, msg)}, true
 }
 
 // checkPipeline runs the pipeline-level checks on a root pipeline.
@@ -254,8 +438,11 @@ func (e *Engine) checkAliases(x *expansion) []Diagnostic {
 	var out []Diagnostic
 	seen := map[string]bool{}
 	report := func(f *fileInfo, line, col, end int, alias, what string) {
-		d := e.at(x, f, line, col, end, SevError, CodeRepoNotDeclared,
+		d, ok := e.at(x, f, line, col, end, SevError, CodeRepoNotDeclared,
 			fmt.Sprintf("%s repository '%s', which this pipeline does not declare in resources.repositories. Azure looks aliases up in the pipeline's resources, so the run fails when it is queued", what, alias))
+		if !ok {
+			return
+		}
 		key := fmt.Sprintf("%s\x00%d", alias, d.Line)
 		if seen[key] {
 			return
@@ -315,8 +502,9 @@ func (e *Engine) checkDependencies(x *expansion) []Diagnostic {
 				if s := closest(n.Name, m.Literals()); s != "" {
 					msg += fmt.Sprintf(". Did you mean '%s'?", s)
 				}
-				diag := e.at(x, f, n.Line, n.Col, n.End, SevError, CodeUnknownDepend, msg)
-				out = append(out, diag)
+				if diag, ok := e.at(x, f, n.Line, n.Col, n.End, SevError, CodeUnknownDepend, msg); ok {
+					out = append(out, diag)
+				}
 			}
 		}
 	}
@@ -348,8 +536,10 @@ func (e *Engine) checkOutputs(x *expansion) []Diagnostic {
 				if dynamic.Has(r.Step) {
 					continue
 				}
-				out = append(out, e.at(x, f, r.Line, r.Col, r.End, SevWarning, CodeOutputVariable,
-					fmt.Sprintf("No step in this pipeline is named '%s', so outputs['%s.%s'] is always empty. Give the step that sets '%s' `name: %s`", r.Step, r.Step, r.Var, r.Var, r.Step)))
+				if d, ok := e.at(x, f, r.Line, r.Col, r.End, SevWarning, CodeOutputVariable,
+					fmt.Sprintf("No step in this pipeline is named '%s', so outputs['%s.%s'] is always empty. Give the step that sets '%s' `name: %s`", r.Step, r.Step, r.Var, r.Var, r.Step)); ok {
+					out = append(out, d)
+				}
 				continue
 			}
 			setsOutput, setsPlain, opaque := false, false, false
@@ -367,8 +557,10 @@ func (e *Engine) checkOutputs(x *expansion) []Diagnostic {
 			if setsOutput || opaque || !setsPlain {
 				continue
 			}
-			out = append(out, e.at(x, f, r.Line, r.Col, r.End, SevWarning, CodeOutputNotIsOutput,
-				fmt.Sprintf("Step '%s' sets '%s' without isOutput=true, so outputs['%s.%s'] is always empty. Use ##vso[task.setvariable variable=%s;isOutput=true]", r.Step, r.Var, r.Step, r.Var, r.Var)))
+			if d, ok := e.at(x, f, r.Line, r.Col, r.End, SevWarning, CodeOutputNotIsOutput,
+				fmt.Sprintf("Step '%s' sets '%s' without isOutput=true, so outputs['%s.%s'] is always empty. Use ##vso[task.setvariable variable=%s;isOutput=true]", r.Step, r.Var, r.Step, r.Var, r.Var)); ok {
+				out = append(out, d)
+			}
 		}
 	}
 	return out
@@ -492,6 +684,9 @@ func (e *Engine) pipelineReport(path string) PipelineReport {
 		for _, d := range e.diagnose(tf.path) {
 			if d.Severity > SevWarning || notAboutTheRun[d.Code] {
 				continue
+			}
+			if st, _ := x.state(tf, d.Line); st == pipeline.False {
+				continue // in a ${{ if }} branch this pipeline never expands
 			}
 			if d.Severity == SevError {
 				rep.Errors++

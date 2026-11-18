@@ -45,6 +45,11 @@ Every pipeline shows a verdict above its first line. It covers the pipeline and 
 template shows up on each pipeline that uses it. Errors mean Azure DevOps rejects the run when it is queued. Warnings mean the run
 starts but is likely to fail or misbehave.
 
+Templates are checked with the values the pipeline passes them. A `${{ if }}` branch whose condition is false with those
+values (literals at the call, values passed on through `${{ parameters.x }}`, defaults, members of `object` defaults) is
+skipped, as Azure skips it. When the condition depends on something only known when the run is queued (a runtime parameter,
+a variable), what the branch would break is a warning that names the branch, not an error.
+
 Click the verdict to list the problems, each at the line in the pipeline that leads to it. *Check Pipeline Before Running* in
 the editor's right-click menu does the same. The **Pipelines** view (VS Code) or tab (IntelliJ) lists every pipeline in the
 workspace, failing first.
@@ -204,8 +209,24 @@ VS Code, <kbd>⌥⏎</kbd> / <kbd>Alt+Enter</kbd> in IntelliJ.
 | Wrong type (`'yes'` for a `boolean`) | Replace it with the right literal |
 | Value not in `values:` | Pick an allowed value |
 | Parameter declared but never used | Remove the declaration |
+| Parameter name in a different case than its declaration (`appId` for `appID`; Azure ignores the case, so this is information) | Change it to the declared name |
 | Repository not downloaded | Fetch it |
 | Template not found, unknown `@alias`, a GitHub or Bitbucket repository without `endpoint:`, a template of the wrong kind (steps where stages go), `dependsOn` on a stage or job that doesn't exist, an output variable that isn't set as an output | — |
+
+Every problem also has *Ignore '…' on this line* and *Ignore '…' in this file*, for one you know about and keep on purpose
+(a parameter kept only so older callers don't break, say). They write a comment that names the problem's code:
+
+```yaml
+parameters:
+# atn-ignore unused-param
+- name: legacyAgentPool
+  type: string
+  default: ''
+```
+
+`# atn-ignore <code>, <code>` applies to the next line (or, at the end of a line, to that line), `# atn-ignore-file <code>` to
+the whole file. The code is required, so a comment never hides more than it names. Ignored problems are left out of verdicts
+too.
 
 | VS Code | IntelliJ |
 |---|---|

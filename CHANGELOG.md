@@ -3,6 +3,23 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [Unreleased]
+
+### Added
+
+- **`# atn-ignore <code>`** acknowledges a problem you keep on purpose, on the next line (or at the end of the line it is about); `# atn-ignore-file <code>` for the whole file. Every problem has two quick fixes that write the comment. Ignored problems don't count in verdicts.
+- **`${{ if }}` branches are decided** with the values a pipeline passes its templates (literals, forwarded `${{ parameters.x }}`, defaults, members of `object` values). A branch Azure skips is no longer checked for that pipeline. A branch that depends on runtime parameters or variables reports what it would break as a warning that names the branch, instead of an error.
+
+### Changed
+
+- Parameter names are matched case-insensitively, as Azure does. `appId` for a parameter declared `appID` is one information note, `param-casing`, with a quick fix, instead of *missing required* + *unknown parameter* (or *undeclared parameter* in a template body).
+- `unknown-repository-alias` on a template is reported only when no pipeline reaches the template. When one does, its `repository-not-declared` says the same on the pipeline.
+
+### Fixed
+
+- A parameter whose value is a `{ }` or `[ ]` spanning several lines: its keys were reported as unknown parameters.
+- `template:` as a key of an object passed to a parameter (`meta: { template: some/path }`) was read as a template call and reported as *template not found*. `template:` is a call only in a list item or under `extends:`.
+
 ## [2.9.0] — 2026-11-17
 
 ### Added

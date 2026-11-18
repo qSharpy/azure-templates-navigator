@@ -137,6 +137,27 @@ func TestIncrementalRelinkMatchesFullRebuild(t *testing.T) {
 			open[pipe] += "  - template: lib/a.yml\n"
 			e.OpenDocument(pipe, open[pipe])
 		}},
+		// ${{ if }} branches depend on the values a call passes and on the
+		// template's defaults
+		{"conditional template and its caller", func() {
+			write(t, root, "lib/cond.yml", "parameters:\n- name: on\n  type: boolean\n  default: false\nsteps:\n- ${{ if parameters.on }}:\n  - template: x.yml@ghost\n")
+			write(t, root, "flag.yml", "trigger: none\nsteps:\n- template: lib/cond.yml\n  parameters:\n    on: false\n")
+			e.FileChanged(filepath.Join(root, "lib/cond.yml"))
+			e.FileChanged(filepath.Join(root, "flag.yml"))
+		}},
+		{"caller flips the value", func() {
+			p := filepath.Join(root, "flag.yml")
+			open[p] = "trigger: none\nsteps:\n- template: lib/cond.yml\n  parameters:\n    on: true\n"
+			e.OpenDocument(p, open[p])
+		}},
+		{"caller drops the value, the default flips", func() {
+			p := filepath.Join(root, "flag.yml")
+			open[p] = "trigger: none\nsteps:\n- template: lib/cond.yml\n"
+			e.OpenDocument(p, open[p])
+			c := filepath.Join(root, "lib/cond.yml")
+			open[c] = strings.Replace(mustRead(t, c), "default: false", "default: true", 1)
+			e.OpenDocument(c, open[c])
+		}},
 		{"pipeline stops calling the chain", func() {
 			open[pipe] = strings.TrimSuffix(open[pipe], "  - template: lib/a.yml\n")
 			e.OpenDocument(pipe, open[pipe])

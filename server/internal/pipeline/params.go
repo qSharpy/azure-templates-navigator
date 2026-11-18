@@ -229,3 +229,19 @@ func ParamByName(params []Param, name string) (Param, bool) {
 	}
 	return Param{}, false
 }
+
+var defaultKeyRe = regexp.MustCompile(`^\s*(?:-\s+)?default\s*:`)
+
+// DefaultKeyLine returns the line of a typed parameter's `default:` key, or
+// -1 (none, or a legacy map-form parameter).
+func DefaultKeyLine(lines []string, p Param) int {
+	if p.Type == "" || p.Line < 0 || p.Line >= len(lines) {
+		return -1
+	}
+	for _, i := range MappingSiblings(lines, p.Line) {
+		if defaultKeyRe.MatchString(lines[i]) {
+			return i
+		}
+	}
+	return -1
+}

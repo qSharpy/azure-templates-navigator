@@ -130,6 +130,15 @@ type fileInfo struct {
 	modTime    time.Time
 	size       int64
 	fromDisk   bool
+	conds      *pipeline.Conditions // ${{ if }} branches, read on first use (conditions)
+}
+
+// conditions returns the file's ${{ if }} branches. Caller holds e.mu.
+func (f *fileInfo) conditions() *pipeline.Conditions {
+	if f.conds == nil {
+		f.conds = pipeline.FindConditions(f.lines)
+	}
+	return f.conds
 }
 
 // Engine is the workspace model. All exported methods are safe for

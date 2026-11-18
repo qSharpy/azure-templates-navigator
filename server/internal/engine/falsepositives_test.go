@@ -182,3 +182,109 @@ steps:
 		t.Errorf("everything is acknowledged: %+v", ds)
 	}
 }
+
+const issue9Conditional = `
+parameters:
+- name: enableExtra
+  type: boolean
+  default: false
+- name: flags
+  type: object
+  default:
+    sbom: true
+steps:
+- ${{ if eq(parameters.enableExtra, true) }}:
+  - template: steps/extra.yml@other
+- ${{ else }}:
+  - template: steps/missing.yml
+- ${{ if eq(parameters.flags.sbom, true) }}:
+  - checkout: sbomtools
+`
+
+// Azure only expands the ${{ if }} branches whose condition is true, so a
+// pipeline is only checked against those (issue #9, 4).
+func TestUntakenBranchesAreNotChecked(t *testing.T) {
+	root, e := preflightWorkspace(t, map[string]string{
+		"conditional.yml": issue9Conditional,
+		"steps/missing.yml": `
+parameters:
+- name: required
+  type: string
+steps:
+- script: echo
+`,
+		"literal-false.yml": "trigger: none\nsteps:\n- template: conditional.yml\n  parameters:\n    enableExtra: false\n    flags: { sbom: false }\n",
+		"literal-true.yml":  "trigger: none\nsteps:\n- template: conditional.yml\n  parameters:\n    enableExtra: true\n",
+		"runtime.yml": `
+parameters:
+- name: extra
+  type: boolean
+  default: false
+trigger: none
+steps:
+- template: wrapper.yml
+  parameters:
+    extra: ${{ parameters.extra }}
+`,
+		// forwards a literal through a second template
+		"wrapper.yml": `
+parameters:
+- name: extra
+  type: boolean
+steps:
+- template: conditional.yml
+  parameters:
+    enableExtra: ${{ parameters.extra }}
+`,
+		"forwarded.yml": "trigger: none\nsteps:\n- template: wrapper.yml\n  parameters:\n    extra: false\n",
+	})
+	type got struct {
+		verdict string
+		codes   map[string]int
+		sev     map[string]int
+	}
+	check := func(rel string) got {
+		t.Helper()
+		rep, ok := e.PipelineCheck(filepath.Join(root, rel))
+		if !ok {
+			t.Fatalf("%s is not a pipeline", rel)
+		}
+		g := got{rep.Verdict(), map[string]int{}, map[string]int{}}
+		for _, p := range rep.Problems {
+			g.codes[p.Code]++
+			g.sev[p.Code] = p.Severity
+		}
+		return g
+	}
+
+	// enableExtra false: the else branch calls missing.yml without its
+	// required parameter (an error in conditional.yml, on a line this
+	// pipeline expands); flags.sbom false skips the checkout.
+	g := check("literal-false.yml")
+	if g.codes[CodeRepoNotDeclared] != 0 || g.codes[CodeMissingRequired] != 1 || len(g.codes) != 1 {
+		t.Errorf("literal false: %+v", g)
+	}
+	// enableExtra true: @other and the checkout (flags.sbom defaults to
+	// true) are undeclared; the else branch is skipped.
+	g = check("literal-true.yml")
+	if g.codes[CodeRepoNotDeclared] != 2 || g.sev[CodeRepoNotDeclared] != SevError || g.codes[CodeMissingRequired] != 0 {
+		t.Errorf("literal true: %+v", g)
+	}
+	// false forwarded through wrapper.yml
+	g = check("forwarded.yml")
+	if g.codes[CodeRepoNotDeclared] != 1 || g.codes[CodeMissingRequired] != 1 {
+		t.Errorf("forwarded: %+v", g)
+	}
+	// a runtime parameter: either branch may run, so @other is a warning
+	// that names the branch, and missing.yml's error still counts
+	rep, _ := e.PipelineCheck(filepath.Join(root, "runtime.yml"))
+	var other []Problem
+	for _, p := range rep.Problems {
+		if p.Code == CodeRepoNotDeclared && strings.Contains(p.Message, "'other'") {
+			other = append(other, p)
+		}
+	}
+	if len(other) != 1 || other[0].Severity != SevWarning || !strings.Contains(other[0].Message, "branch at conditional.yml:10 is taken") {
+		t.Errorf("runtime: %+v", rep.Problems)
+	}
+}
