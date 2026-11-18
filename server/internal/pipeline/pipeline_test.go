@@ -410,3 +410,101 @@ steps:
 		t.Fatalf("want %v got %v", want, got)
 	}
 }
+
+// A flow collection that spans lines is one value: its keys are not
+// parameters of the call (issue #9).
+func TestParseCallSiteMultiLineFlowValue(t *testing.T) {
+	ls := lines(`
+steps:
+  - template: t.yml
+    parameters:
+      appID: a
+      props: {
+        type: 'artifact',
+        name: 'a'
+      }
+      list: [
+        'x', "y]"
+      ]
+      inline: { k: v }
+      after: 1
+  - script: echo
+`)
+	cs := ParseCallSite(ls, 1)
+	want := []string{"appID", "props", "list", "inline", "after"}
+	if !reflect.DeepEqual(cs.Order, want) {
+		t.Fatalf("order: want %v got %v", want, cs.Order)
+	}
+	if p := cs.Passed["props"]; !p.IsBlock || p.LastLine != 7 || p.Line != 4 {
+		t.Errorf("props: %+v", p)
+	}
+	if p := cs.Passed["list"]; !p.IsBlock || p.LastLine != 10 {
+		t.Errorf("list: %+v", p)
+	}
+	if p := cs.Passed["inline"]; p.IsBlock || p.Value != "{ k: v }" || p.LastLine != 11 {
+		t.Errorf("inline: %+v", p)
+	}
+	if cs.LastLine != 12 {
+		t.Errorf("last line: %d", cs.LastLine)
+	}
+
+	// still being typed: the rest of the block is the value
+	open := ParseCallSite(lines(`
+- template: t.yml
+  parameters:
+    props: {
+      type: x,
+`), 0)
+	if !reflect.DeepEqual(open.Order, []string{"props"}) {
+		t.Errorf("unterminated: %v", open.Order)
+	}
+}
+
+// `template:` is a reference in a list item or under extends:, and data
+// anywhere else (issue #9).
+func TestTemplateRefAtPosition(t *testing.T) {
+	ls := lines(`
+extends:
+  template: base.yml
+  parameters:
+    stages:
+    - stage: A
+      jobs:
+      - template: jobs.yml
+    meta:
+      name: x
+      template: some/path/
+    items:
+    - name: y
+      template: item.yml
+steps:
+- parameters: { a: 1 }
+  template: reversed.yml
+- ${{ if true }}:
+  - template: cond.yml
+- ${{ if true }}:
+    template: merged.yml
+other:
+  ${{ if true }}:
+    template: nope.yml
+`)
+	var got []string
+	for _, r := range FindTemplateRefs(ls) {
+		got = append(got, r.Ref)
+	}
+	want := []string{"base.yml", "jobs.yml", "item.yml", "reversed.yml", "cond.yml", "merged.yml"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("want %v got %v", want, got)
+	}
+
+	cond := lines(`
+extends:
+  ${{ if eq(parameters.x, 'a') }}:
+    template: a.yml
+  ${{ else }}:
+    template: b.yml
+`)
+	if n := len(FindTemplateRefs(cond)); n != 2 {
+		t.Errorf("conditional extends: %d refs", n)
+	}
+}

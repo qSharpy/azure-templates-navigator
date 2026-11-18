@@ -61,11 +61,7 @@ func (e *Engine) CodeActions(path string, startLine, endLine int) []CodeAction {
 			pp := cs.Passed[d.param]
 			del := TextEdit{StartLine: pp.DelStart.Line, StartCol: pp.DelStart.Col, EndLine: pp.DelEnd.Line, EndCol: pp.DelEnd.Col}
 			if !pp.Flow {
-				end := pp.Line
-				if pp.IsBlock {
-					end = pipeline.BlockEnd(f.lines, pp.Line)
-				}
-				del = deleteLines(f.lines, pp.Line, end)
+				del = deleteLines(f.lines, pp.Line, pp.LastLine)
 			}
 			out = append(out, CodeAction{Title: fmt.Sprintf("Remove unknown parameter '%s'", d.param), Diagnostic: dp,
 				Edits: []TextEdit{del}, Preferred: len(d.suggestions) == 0})

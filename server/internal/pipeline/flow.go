@@ -169,3 +169,65 @@ func ParseFlowMapping(lines []string, line, col, keyCol int) FlowMapping {
 	finish()
 	return fm
 }
+
+// FlowEnd finds the bracket that closes the flow collection (`{` or `[`)
+// opened at (line, col), skipping quoted scalars and nested brackets
+// (including `${{ }}`). keyCol is the column of the key that owns the value:
+// like ParseFlowMapping, reading stops at the first later line that is not
+// indented beyond it (other than a closing bracket at keyCol), and ok is
+// false when the collection is not closed by then.
+func FlowEnd(lines []string, line, col, keyCol int) (end Pos, ok bool) {
+	if line < 0 || line >= len(lines) || col >= len(lines[line]) {
+		return Pos{}, false
+	}
+	if c := lines[line][col]; c != '{' && c != '[' {
+		return Pos{}, false
+	}
+	depth := 0
+	inSingle, inDouble := false, false
+	for l := line; l < len(lines); l++ {
+		if l > line && !IsBlank(lines[l]) && !IsComment(lines[l]) {
+			ind := Indent(lines[l])
+			t := strings.TrimSpace(lines[l])
+			if ind < keyCol || (ind == keyCol && !strings.HasPrefix(t, "}") && !strings.HasPrefix(t, "]")) {
+				return Pos{}, false
+			}
+		}
+		s := StripComment(lines[l])
+		start := 0
+		if l == line {
+			start = col
+		}
+		for c := start; c < len(s); c++ {
+			ch := s[c]
+			switch {
+			case inDouble:
+				if ch == '\\' {
+					c++
+				} else if ch == '"' {
+					inDouble = false
+				}
+				continue
+			case inSingle:
+				if ch == '\'' {
+					inSingle = false
+				}
+				continue
+			}
+			switch ch {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+				if depth == 0 {
+					return Pos{l, c}, true
+				}
+			case '"':
+				inDouble = true
+			case '\'':
+				inSingle = true
+			}
+		}
+	}
+	return Pos{}, false
+}

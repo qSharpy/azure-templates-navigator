@@ -63,8 +63,53 @@ func TemplateRefOnLine(line string, lineNo int) (TemplateRef, bool) {
 	}, true
 }
 
+// TemplateRefAt returns the template reference on line i of a document. It
+// is TemplateRefOnLine plus a check of where the key sits: Azure only reads
+// `template:` as a reference in a list item (a step, job, stage or variable)
+// or directly under `extends:`. Anywhere else, e.g. a key of an object
+// passed as a parameter value, it is data.
+func TemplateRefAt(lines []string, i int) (TemplateRef, bool) {
+	if i < 0 || i >= len(lines) {
+		return TemplateRef{}, false
+	}
+	r, ok := TemplateRefOnLine(lines[i], i)
+	if !ok || !templateKeyPosition(lines, i) {
+		return TemplateRef{}, false
+	}
+	return r, true
+}
+
+// templateKeyPosition reports whether the key on line i is in a mapping that
+// is a list item, or that is the value of `extends:` (possibly through
+// `${{ if }}` / `${{ else }}` branches).
+func templateKeyPosition(lines []string, i int) bool {
+	col := KeyColumn(lines[i])
+	first := MappingSiblings(lines, i)[0]
+	if Indent(lines[first]) < KeyColumn(lines[first]) {
+		return true // `- template:`, or a later key of a `- k:` item
+	}
+	for j := first - 1; j >= 0; j-- {
+		l := lines[j]
+		if IsBlank(l) || IsComment(l) || Indent(l) >= col {
+			continue
+		}
+		if IsControlLine(l) {
+			if Indent(l) < KeyColumn(l) {
+				return true // `- ${{ if }}:` merges the mapping into a list item
+			}
+			col = Indent(l)
+			continue
+		}
+		return extendsKeyRe.MatchString(StripComment(l))
+	}
+	return false
+}
+
+var extendsKeyRe = regexp.MustCompile(`^\s*extends\s*:\s*$`)
+
 // FindTemplateRefs returns every template reference in a document. Lines
-// inside block scalars (`script: |` bodies) are text and are skipped.
+// inside block scalars (`script: |` bodies) are text and are skipped, and so
+// are `template:` keys that are data (see TemplateRefAt).
 func FindTemplateRefs(lines []string) []TemplateRef {
 	var out []TemplateRef
 	var mask []bool
@@ -78,7 +123,7 @@ func FindTemplateRefs(lines []string) []TemplateRef {
 		if mask[i] {
 			continue
 		}
-		if r, ok := TemplateRefOnLine(l, i); ok {
+		if r, ok := TemplateRefAt(lines, i); ok {
 			out = append(out, r)
 		}
 	}
@@ -173,7 +218,7 @@ func MappingSiblings(lines []string, line int) []int {
 func siblingTemplate(lines []string, line int) int {
 	col := KeyColumn(lines[line])
 	for _, i := range MappingSiblings(lines, line) {
-		if r, ok := TemplateRefOnLine(lines[i], i); ok && r.KeyCol == col {
+		if r, ok := TemplateRefAt(lines, i); ok && r.KeyCol == col {
 			return i
 		}
 	}
@@ -208,7 +253,7 @@ func FindCallSite(lines []string, cursorLine int) (CallSiteContext, bool) {
 			continue
 		}
 		minIndent = ind
-		if _, ok := TemplateRefOnLine(l, i); ok {
+		if _, ok := TemplateRefAt(lines, i); ok {
 			ctx.TemplateLine = i
 			return ctx, true
 		}

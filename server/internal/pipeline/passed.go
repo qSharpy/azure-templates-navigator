@@ -15,6 +15,7 @@ type PassedParam struct {
 	ValueLine int // line of the value (differs from Line only in multi-line flow mappings)
 	ValueCol  int
 	ValueEnd  int // end column of the inline value on ValueLine, before any comment
+	LastLine  int // last line of the entry (a block value, or a flow value spanning lines)
 
 	// Flow is set for entries of a `parameters: { a: 1 }` flow mapping.
 	// DelStart/DelEnd is the text to remove to drop the entry, including
@@ -120,12 +121,34 @@ func ParseCallSite(lines []string, templateLine int) CallSite {
 			valueCol = m[6]
 		}
 		isBlock := value == "" || strings.HasPrefix(value, "|") || strings.HasPrefix(value, ">")
+		last := i
+		skipTo := -1
+		if strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[") {
+			// A flow collection may span lines: its keys belong to the
+			// value, not to the call.
+			if end, ok := FlowEnd(lines, i, valueCol, ind); !ok {
+				isBlock, value = true, ""
+			} else if end.Line > i {
+				isBlock, value, last, skipTo = true, "", end.Line, end.Line
+			}
+		}
+		if isBlock && skipTo < 0 {
+			last = BlockEnd(lines, i)
+		}
 		if _, dup := cs.Passed[name]; !dup {
 			cs.Passed[name] = PassedParam{Name: name, Value: value, IsBlock: isBlock, Line: i, NameCol: m[4],
-				ValueLine: i, ValueCol: valueCol, ValueEnd: len(strings.TrimRight(clean, " \t"))}
+				ValueLine: i, ValueCol: valueCol, ValueEnd: len(strings.TrimRight(clean, " \t")), LastLine: last}
 			cs.Order = append(cs.Order, name)
 		}
-		if isBlock {
+		switch {
+		case skipTo >= 0:
+			for i < skipTo {
+				i++
+				if !IsBlank(lines[i]) && !IsComment(lines[i]) {
+					cs.LastLine = i
+				}
+			}
+		case isBlock:
 			skipDeeperThan = ind
 		}
 	}
@@ -161,7 +184,7 @@ func parseFlowCallSite(cs *CallSite, lines []string, openCol, keyCol int) {
 			continue
 		}
 		pp := PassedParam{Name: e.Key, Value: e.Value, Line: e.KeyPos.Line, NameCol: e.KeyPos.Col,
-			ValueLine: e.ValuePos.Line, ValueCol: e.ValuePos.Col, ValueEnd: e.End.Col, Flow: true}
+			ValueLine: e.ValuePos.Line, ValueCol: e.ValuePos.Col, ValueEnd: e.End.Col, LastLine: e.End.Line, Flow: true}
 		if e.End.Line != e.ValuePos.Line {
 			// a value spanning lines: range the first line only
 			pp.ValueEnd = len(strings.TrimRight(StripComment(lines[e.ValuePos.Line]), " \t"))
