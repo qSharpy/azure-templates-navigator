@@ -147,3 +147,17 @@ func (c *Conditions) Guard(line int, b Bindings) int {
 	}
 	return -1
 }
+
+// InEach reports whether line is inside a `${{ each }}` loop, where what is
+// expanded depends on the items looped over.
+func (c *Conditions) InEach(line int) bool {
+	if c == nil || line < 0 || line >= len(c.inner) {
+		return false
+	}
+	for k := c.inner[line]; k >= 0; k = c.Branches[k].Parent {
+		if c.Branches[k].Kind == "each" {
+			return true
+		}
+	}
+	return false
+}

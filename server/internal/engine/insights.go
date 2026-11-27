@@ -797,6 +797,11 @@ var problemTypes = map[string][2]string{
 	CodeTemplateMissing: {"Template not found", "A call points to a template file that doesn't exist."},
 	CodeUnknownAlias:    {"Unknown repository alias", "A call uses @alias without a matching resources.repositories entry."},
 	CodeRepoUnavailable: {"Repository unavailable", "A template comes from a repository that couldn't be fetched or found locally."},
+	CodeTemplateCycle:   {"Template cycle", "A template includes itself, directly or through others, so it never stops expanding."},
+	CodeTooManyFiles:    {"Too many files", "A pipeline includes more than 100 YAML files, the most Azure accepts."},
+	CodeDependencyCycle: {"Dependency cycle", "Stages or jobs depend on each other in a loop."},
+	CodeUnknownFunction: {"Unknown function", "A ${{ }} expression calls a function Azure doesn't have (often a typo)."},
+	CodeDefaultType:     {"Default of the wrong type", "A parameter's default isn't a value of its type, like text for a number."},
 }
 
 const statTypeFilesMax = 25

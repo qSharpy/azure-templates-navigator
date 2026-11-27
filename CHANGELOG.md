@@ -3,6 +3,22 @@
 One changelog for the `atn` server, the VS Code extension and the IntelliJ plugin. They share a version.
 For history before 2.0.0, see the CHANGELOGs of the former `azure-templates-vscode-extension` (1.x) and `azure-templates-intellij` (1.x) repositories.
 
+## [2.12.0] — 2026-11-27
+
+### Added
+
+Five more checks for pipelines that Azure rejects when the run is queued, which atn used to pass as *✓ No problems found*. Each one was checked against Azure DevOps' own compile check.
+
+- **Template cycles** (`template-cycle`). A template that includes itself, directly or through others, with the same parameters never stops expanding; Azure gives up with *Maximum object depth exceeded*. Recursion that ends, because an `${{ if }}` turns false with the values passed down, or that walks the items of an `${{ each }}`, is fine. A cycle through an `${{ if }}` that depends on runtime values is a warning naming the branch.
+- **More than 100 YAML files in one pipeline** (`too-many-files`): the pipeline and every template it includes, each counted once. A warning when only `${{ if }}` branches decided at queue time take it past 100.
+- **Dependency cycles** (`dependency-cycle`): stages or jobs that depend on each other in a loop, or on themselves. This includes a stage without `dependsOn`, which depends on the stage before it.
+- **Defaults of the wrong type** (`default-type-mismatch`): `default: abc` for a `number`, `maybe` for a `boolean`, a list for a `string`, a plain value for a `step`. Azure checks the default whenever the parameter isn't passed, even if nothing reads it.
+- **Unknown functions in `${{ }}`** (`unknown-function`), with *Did you mean …?*: `lenght(...)`, or `add(...)`, which Azure doesn't have. Inside an `${{ if }}` that depends on parameters it is a warning.
+
+### Changed
+
+- CI runs the full test suite (Go, the VS Code E2E, IntelliJ unit tests) on every push to `main` and every pull request, not only when a release is tagged.
+
 ## [2.11.0] — 2026-11-18
 
 ### Added

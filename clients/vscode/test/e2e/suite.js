@@ -53,15 +53,19 @@ async function run() {
     const typed = `${indent}- template: templates/notify-te`;
     await editor.edit(e => e.insert(new vscode.Position(at, 0), typed + '\n'));
     editor.selection = new vscode.Selection(at, typed.length, at, typed.length);
+    // Wait until the server answers for the edited text before opening the
+    // suggest widget: a fixed sleep alone was flaky on a busy machine.
+    const direct = await vscode.commands.executeCommand('vscode.executeCompletionItemProvider', doc.uri, new vscode.Position(at, typed.length));
+    assert.ok(direct.items.some(i => (typeof i.label === 'string' ? i.label : i.label.label) === 'templates/notify-teams.yml'), 'notify-teams.yml is offered');
     await vscode.commands.executeCommand('editor.action.triggerSuggest');
-    await sleep(1500);
+    await sleep(2500);
     await vscode.commands.executeCommand('acceptSelectedSuggestion');
     await sleep(500);
     const got = [0, 1, 2].map(i => doc.lineAt(at + i).text);
     console.log('accepted completion:', JSON.stringify(got));
     const key = ' '.repeat(indent.length + 2);
+    await vscode.commands.executeCommand('workbench.action.files.revert'); // before asserting: never leave the sample edited
     assert.deepStrictEqual(got, [`${indent}- template: templates/notify-teams.yml`, `${key}parameters:`, `${key}  message: ''`]);
-    await vscode.commands.executeCommand('workbench.action.files.revert');
   }
 
   // 4. quick fixes for a diagnostic

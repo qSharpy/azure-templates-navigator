@@ -59,7 +59,10 @@ trigger:
   - Aliases a template uses but the pipeline doesn't declare. Azure looks aliases up in the *pipeline's* `resources`.
   - GitHub, GitHub Enterprise and Bitbucket repositories declared without `endpoint:` (the service connection).
   - Names: `dependsOn` naming a stage or job that doesn't exist, invalid or duplicate stage and job names.
-  - Steps templates used under `jobs:`, defaults that aren't in `values:`, and tabs in indentation.
+  - Stages or jobs that depend on each other in a loop, including through a stage's implicit dependency on the one before it.
+  - Templates that include themselves (directly or through others) with the same parameters, and pipelines that include more than 100 YAML files.
+  - Steps templates used under `jobs:`, defaults that aren't in `values:` or aren't of the parameter's type (`abc` for a `number`), and tabs in indentation.
+  - Functions Azure doesn't have in `${{ }}` expressions (`lenght(...)`, `add(...)`).
 - **Warnings** are what goes wrong once the run is under way.
   - Output variables read from a step that doesn't exist, or set without `isOutput=true`. They are always empty.
   - Runtime parameters without a default in a pipeline that a trigger or a schedule starts.

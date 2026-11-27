@@ -227,6 +227,7 @@ VS Code, <kbd>⌥⏎</kbd> / <kbd>Alt+Enter</kbd> in IntelliJ.
 | Parameter name in a different case than its declaration (`appId` for `appID`; Azure ignores the case, so this is information) | Change it to the declared name |
 | Repository not downloaded | Fetch it |
 | Template not found, unknown `@alias`, a GitHub or Bitbucket repository without `endpoint:`, a template of the wrong kind (steps where stages go), `dependsOn` on a stage or job that doesn't exist, an output variable that isn't set as an output | — |
+| A template that includes itself, more than 100 YAML files in one pipeline, stages or jobs that depend on each other in a loop, a default that isn't of the parameter's type, an unknown function in `${{ }}` (with "did you mean …?") | — |
 
 Every problem also has *Ignore '…' on this line* and *Ignore '…' in this file*, for one you know about and keep on purpose
 (a parameter kept only so older callers don't break, say). They write a comment that names the problem's code:

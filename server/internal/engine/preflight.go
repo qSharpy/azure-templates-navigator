@@ -33,7 +33,16 @@ const (
 	CodeOutputVariable    = "unknown-output-variable"
 	CodeOutputNotIsOutput = "output-variable-not-output"
 	CodeRepoNoEndpoint    = "repository-missing-endpoint"
+	CodeDefaultType       = "default-type-mismatch"
+	CodeDependencyCycle   = "dependency-cycle"
+	CodeUnknownFunction   = "unknown-function"
+	CodeTemplateCycle     = "template-cycle"
+	CodeTooManyFiles      = "too-many-files"
 )
+
+// maxPipelineFiles is how many YAML files (the pipeline and the templates it
+// includes, each counted once) Azure accepts in one run.
+const maxPipelineFiles = 100
 
 // ---------------------------------------------------------------------------
 // File-level checks
@@ -57,12 +66,92 @@ func (e *Engine) checkStructure(f *fileInfo) []Diagnostic {
 			Message: fmt.Sprintf("%s '%s' is defined more than once in this list; Azure rejects the run when it is queued", capitalize(kindLabel(it.Kind)), it.Name)})
 	}
 	for _, p := range f.params {
-		if d, ok := checkDefault(p); ok {
+		if d, ok := checkDefaultType(p); ok {
+			out = append(out, d)
+		} else if d, ok := checkDefault(p); ok {
 			out = append(out, d)
 		}
 	}
+	for _, c := range pipeline.DependencyCycles(f.lines) {
+		what := kindLabel(c.Owner.Kind)
+		msg := fmt.Sprintf("%s '%s' depends on '%s', which depends on it in turn (%s). Azure rejects a run whose dependencies form a cycle when it is queued",
+			capitalize(what), c.Owner.Name, c.On, strings.Join(c.Cycle, " → "))
+		if c.Implicit {
+			msg = fmt.Sprintf("Stage '%s' has no dependsOn, so it depends on the stage before it, '%s', which depends on it in turn (%s). Azure rejects a run whose dependencies form a cycle when it is queued. Add `dependsOn: []` or name its real dependencies",
+				c.Owner.Name, c.On, strings.Join(c.Cycle, " → "))
+		} else if strings.EqualFold(c.Owner.Name, c.On) {
+			msg = fmt.Sprintf("%s '%s' depends on itself. Azure rejects a run whose dependencies form a cycle when it is queued", capitalize(what), c.Owner.Name)
+		}
+		out = append(out, Diagnostic{Line: c.Line, StartCol: c.Col, EndLine: c.Line, EndCol: c.End, Severity: SevError, Code: CodeDependencyCycle, Message: msg})
+	}
+	// Azure only evaluates the ${{ if }} branches it takes, so a bad call in
+	// a branch that depends on parameters is a warning here (a pipeline that
+	// passes values decides it in its verdict) and one in a branch never
+	// taken is nothing.
+	conds := f.conditions()
+	for _, c := range pipeline.UnknownFunctions(f.lines) {
+		sev := SevError
+		msg := fmt.Sprintf("Unknown function '%s' in a ${{ }} expression; Azure rejects the run when it is queued", c.Name)
+		switch conds.Live(c.Line, pipeline.Bindings{}) {
+		case pipeline.False:
+			continue
+		case pipeline.Unknown:
+			sev = SevWarning
+			msg += fmt.Sprintf(", if the ${{ }} branch at line %d is taken", conds.Guard(c.Line, pipeline.Bindings{})+1)
+		}
+		if pipeline.RuntimeFunctions[strings.ToLower(c.Name)] {
+			msg += fmt.Sprintf(". %s() only works at run time: in a condition: without ${{ }}, or in $[ ]", c.Name)
+		} else if s := closest(c.Name, pipeline.FunctionNames); s != "" {
+			msg += fmt.Sprintf(". Did you mean '%s'?", s)
+		}
+		out = append(out, Diagnostic{Line: c.Line, StartCol: c.Col, EndLine: c.Line, EndCol: c.End, Severity: sev, Code: CodeUnknownFunction, Message: msg})
+	}
 	out = append(out, checkEndpoints(f)...)
 	return out
+}
+
+// checkDefaultType reports a default that is not a value of the parameter's
+// type, like `abc` for a number. Azure checks it whenever the parameter isn't
+// passed, even if nothing reads it, so those runs fail when they are queued.
+func checkDefaultType(p pipeline.Param) (Diagnostic, bool) {
+	if !p.HasDefault || !p.TypeWritten || p.DefaultEnd == p.DefaultCol {
+		return Diagnostic{}, false
+	}
+	raw := strings.TrimSpace(p.Default)
+	v := pipeline.Unquote(raw)
+	if raw == "" || v == "" || pipeline.IsExpression(v) || strings.Contains(v, "${{") {
+		return Diagnostic{}, false
+	}
+	switch v {
+	case "null", "Null", "NULL", "~":
+		return Diagnostic{}, false
+	}
+	// What Azure accepts was checked with its preview API: numbers like
+	// `.5`, `+1`, `1,000` and `' 2 '` pass, `1e3` and `0x10` don't; booleans
+	// are true or false in any case (`yes`, `on`, `1` are rejected).
+	list := strings.HasPrefix(raw, "[")
+	mapping := strings.HasPrefix(raw, "{")
+	var bad bool
+	switch strings.ToLower(p.Type) {
+	case "number":
+		bad = list || mapping || !strings.ContainsAny(v, "0123456789") || strings.Trim(v, "0123456789+-., ") != ""
+	case "boolean":
+		bad = !strings.EqualFold(strings.TrimSpace(v), "true") && !strings.EqualFold(strings.TrimSpace(v), "false")
+	case "string":
+		bad = list || mapping
+	case "step", "job", "deployment", "stage":
+		bad = !mapping || strings.ReplaceAll(raw, " ", "") == "{}"
+	case "steplist", "joblist", "deploymentlist", "stagelist":
+		bad = !list
+	default:
+		return Diagnostic{}, false
+	}
+	if !bad {
+		return Diagnostic{}, false
+	}
+	return Diagnostic{Line: p.DefaultLine, StartCol: p.DefaultCol, EndLine: p.DefaultLine, EndCol: p.DefaultEnd,
+		Severity: SevError, Code: CodeDefaultType, param: p.Name, paramType: p.Type,
+		Message: fmt.Sprintf("Default %s of parameter '%s' is not a valid %s, so any run (or call) that doesn't set it fails when it is queued", raw, p.Name, p.Type)}, true
 }
 
 // checkEndpoints: a repository on GitHub, GitHub Enterprise or Bitbucket is
@@ -182,7 +271,25 @@ type expansion struct {
 	// per distinct set of values), so ${{ if }} branches can be decided.
 	ctxs map[string][]xctx
 	rel  func(string) string
+	// links are the template calls between the ways files are reached
+	// (file + parameter values, see stateKey), for finding templates that
+	// include themselves.
+	links map[string][]stateLink
+	start string // the root pipeline's state
 }
+
+// stateLink is a template call from one reached state to another.
+type stateLink struct {
+	to   string
+	from *fileInfo
+	ref  pipeline.TemplateRef
+	// live: whether the call is expanded with the caller's values, not
+	// counting how the caller itself was reached.
+	live  pipeline.Tri
+	guard string // the ${{ if }} it depends on ("file:line") when live is Unknown
+}
+
+func stateKey(path, ctxKey string) string { return path + "\x00" + ctxKey }
 
 // xctx is one way a file is reached: the parameter values its call passes,
 // and, when the path to it goes through a ${{ if }} whose condition is not
@@ -190,6 +297,9 @@ type expansion struct {
 type xctx struct {
 	b     pipeline.Bindings
 	guard string
+	// inEach: the path to it goes through a ${{ each }}, which may loop over
+	// nothing.
+	inEach bool
 }
 
 // maxContexts bounds the distinct parameter values tracked per file; past
@@ -201,10 +311,11 @@ const maxContexts = 8
 // along the way are not followed. Caller holds e.mu.
 func (e *Engine) expand(root *fileInfo) *expansion {
 	x := &expansion{root: root, via: map[string]pipeline.TemplateRef{}, complete: true, declared: map[string]bool{"self": true},
-		ctxs: map[string][]xctx{}, rel: e.relPath}
+		ctxs: map[string][]xctx{}, rel: e.relPath, links: map[string][]stateLink{}, start: stateKey(root.path, "")}
 	type item struct {
-		f *fileInfo
-		c xctx
+		f   *fileInfo
+		c   xctx
+		key string
 	}
 	seenCtx := map[string]map[string]bool{root.path: {"": true}}
 	dynamic := map[string]bool{}
@@ -213,7 +324,7 @@ func (e *Engine) expand(root *fileInfo) *expansion {
 	start := xctx{b: pipeline.Bindings{}}
 	x.ctxs[root.path] = []xctx{start}
 	x.files = append(x.files, root)
-	queue := []item{{root, start}}
+	queue := []item{{root, start, ""}}
 	for len(queue) > 0 {
 		it := queue[0]
 		queue = queue[1:]
@@ -245,7 +356,8 @@ func (e *Engine) expand(root *fileInfo) *expansion {
 				x.complete = false
 				continue
 			}
-			c := xctx{b: e.bindingsFor(tf, f, ed.ref, it.c.b), guard: it.c.guard}
+			c := xctx{b: e.bindingsFor(tf, f, ed.ref, it.c.b), guard: it.c.guard,
+				inEach: it.c.inEach || f.conditions().InEach(ed.ref.Line)}
 			if c.guard == "" && live == pipeline.Unknown {
 				c.guard = fmt.Sprintf("%s:%d", e.relPath(f.path), f.conditions().Guard(ed.ref.Line, it.c.b)+1)
 			}
@@ -267,12 +379,23 @@ func (e *Engine) expand(root *fileInfo) *expansion {
 			if c.guard != "" {
 				key += "?"
 			}
+			own := f.conditions().Live(ed.ref.Line, it.c.b)
+			link := stateLink{to: stateKey(tf.path, key), from: f, ref: ed.ref, live: own}
+			if own == pipeline.Unknown {
+				link.guard = fmt.Sprintf("%s:%d", e.relPath(f.path), f.conditions().Guard(ed.ref.Line, it.c.b)+1)
+			}
+			// A call inside ${{ each }} is left out: recursion over nested
+			// items stops when it runs out of them.
+			if !f.conditions().InEach(ed.ref.Line) {
+				from := stateKey(f.path, it.key)
+				x.links[from] = append(x.links[from], link)
+			}
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
 			x.ctxs[tf.path] = append(x.ctxs[tf.path], c)
-			queue = append(queue, item{tf, c})
+			queue = append(queue, item{tf, c, key})
 		}
 	}
 	return x
@@ -425,11 +548,123 @@ func (e *Engine) checkPipeline(root *fileInfo) []Diagnostic {
 	x := e.expand(root)
 	var out []Diagnostic
 	out = append(out, e.checkAliases(x)...)
+	out = append(out, e.checkCycles(x)...)
+	out = append(out, e.checkFileCount(x)...)
 	if x.complete {
 		out = append(out, e.checkDependencies(x)...)
 		out = append(out, e.checkOutputs(x)...)
 	}
 	return out
+}
+
+// checkCycles: a template that includes itself, directly or through others,
+// with the same parameter values never stops expanding, so Azure rejects
+// the run when it is queued ("Maximum object depth exceeded"). Recursion
+// that ends, because a ${{ if }} turns false with the values passed down,
+// reaches a new state and is not a cycle. A cycle that goes through a
+// ${{ if }} we can't decide is a warning.
+func (e *Engine) checkCycles(x *expansion) []Diagnostic {
+	var out []Diagnostic
+	reported := map[string]int{} // call → index in out
+	onStack := map[string]int{}  // state → index in stack
+	done := map[string]bool{}
+	var stack []stateLink // the links followed to reach the current state
+	var visit func(state string)
+	visit = func(state string) {
+		onStack[state] = len(stack)
+		for _, l := range x.links[state] {
+			if l.live == pipeline.False {
+				continue
+			}
+			if i, ok := onStack[l.to]; ok {
+				cycle := append(append([]stateLink{}, stack[i:]...), l)
+				if d, ok := e.cycleDiag(x, cycle); ok {
+					k := fmt.Sprintf("%s\x00%d", l.from.path, l.ref.Line)
+					if j, ok := reported[k]; !ok {
+						reported[k] = len(out)
+						out = append(out, d)
+					} else if d.Severity < out[j].Severity {
+						out[j] = d // an error beats a warning on the same call
+					}
+				}
+				continue
+			}
+			if done[l.to] {
+				continue
+			}
+			stack = append(stack, l)
+			visit(l.to)
+			stack = stack[:len(stack)-1]
+		}
+		delete(onStack, state)
+		done[state] = true
+	}
+	visit(x.start)
+	return out
+}
+
+// cycleDiag reports a cycle at its last call, the one that leads back.
+func (e *Engine) cycleDiag(x *expansion, cycle []stateLink) (Diagnostic, bool) {
+	last := cycle[len(cycle)-1]
+	names := []string{}
+	for _, l := range cycle {
+		names = append(names, e.relPath(l.from.path))
+	}
+	names = append(names, e.relPath(cycle[0].from.path))
+	if len(names) > 6 { // a → b → c → … (n more) → y → a
+		names = append(append(names[:3:3], fmt.Sprintf("… (%d more)", len(names)-5)), names[len(names)-2:]...)
+	}
+	sev, guard := SevError, ""
+	for _, l := range cycle {
+		if l.live == pipeline.Unknown {
+			sev, guard = SevWarning, l.guard
+			break
+		}
+	}
+	var msg string
+	if len(cycle) == 1 {
+		msg = fmt.Sprintf("'%s' includes itself with the same parameters, so it never stops expanding. Azure rejects the run when it is queued (maximum depth exceeded)", e.relPath(last.from.path))
+	} else {
+		msg = fmt.Sprintf("Template cycle: %s. Each includes the next with the same parameters, so it never stops expanding. Azure rejects the run when it is queued (maximum depth exceeded)", strings.Join(names, " → "))
+	}
+	if guard != "" {
+		msg += fmt.Sprintf(", if the ${{ }} branch at %s is taken", guard)
+	}
+	return e.at(x, last.from, last.ref.Line, last.ref.ValueCol, last.ref.ValueEnd, sev, CodeTemplateCycle, msg)
+}
+
+// checkFileCount: Azure accepts at most maxPipelineFiles YAML files in one
+// run, the pipeline included, each counted once however often it is used.
+// Files reached only through ${{ if }} branches we can't decide, or inside
+// a ${{ each }}, count for a warning, not an error.
+func (e *Engine) checkFileCount(x *expansion) []Diagnostic {
+	certain := 0
+	for _, f := range x.files {
+		for _, c := range x.ctxs[f.path] {
+			if c.guard == "" && !c.inEach {
+				certain++
+				break
+			}
+		}
+	}
+	total := len(x.files)
+	if total <= maxPipelineFiles {
+		return nil
+	}
+	line := 0
+	for i, l := range x.root.lines {
+		if !pipeline.IsBlank(l) && !pipeline.IsComment(l) {
+			line = i
+			break
+		}
+	}
+	end := len(pipeline.StripComment(x.root.lines[line]))
+	if certain > maxPipelineFiles {
+		return []Diagnostic{{Line: line, StartCol: 0, EndLine: line, EndCol: end, Severity: SevError, Code: CodeTooManyFiles,
+			Message: fmt.Sprintf("This pipeline includes %d YAML files (itself and its templates); Azure allows at most %d, so the run fails when it is queued", certain, maxPipelineFiles)}}
+	}
+	return []Diagnostic{{Line: line, StartCol: 0, EndLine: line, EndCol: end, Severity: SevWarning, Code: CodeTooManyFiles,
+		Message: fmt.Sprintf("This pipeline can include up to %d YAML files (itself and its templates), depending on ${{ if }} branches decided when the run is queued; Azure allows at most %d", total, maxPipelineFiles)}}
 }
 
 // checkAliases: Azure resolves every `@alias` and `checkout: alias` in the

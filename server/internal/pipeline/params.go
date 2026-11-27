@@ -17,6 +17,9 @@ type Param struct {
 	Line        int      `json:"line"`             // 0-based line of the name (the `- name:` entry)
 	NameCol     int      `json:"nameCol"`          // byte column of the name on that line
 
+	// TypeWritten: the entry has a `type:` (Type is "string" without one).
+	TypeWritten bool `json:"-"`
+
 	// EntryLine is where the entry starts: Line, except for an inline entry
 	// whose name is written on a later line than its `- {`.
 	EntryLine int `json:"-"`
@@ -133,7 +136,7 @@ func ParseParameters(lines []string) []Param {
 			key, val := pm[2], strings.TrimSpace(pm[3])
 			switch key {
 			case "type":
-				p.Type = Unquote(val)
+				p.Type, p.TypeWritten = Unquote(val), true
 			case "default":
 				p.HasDefault = true
 				p.Default = val
@@ -179,7 +182,7 @@ func parseInlineParam(lines []string, line, col, baseIndent, end int) (Param, bo
 				p.NameCol += c
 			}
 		case "type":
-			p.Type = Unquote(val)
+			p.Type, p.TypeWritten = Unquote(val), true
 		case "default":
 			p.HasDefault = true
 			p.Default = val

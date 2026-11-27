@@ -510,6 +510,9 @@ func fileOrDirExists(p string) bool {
 var (
 	msgLocation = regexp.MustCompile(`^(.+?):\d+: `)
 	msgSuggest  = regexp.MustCompile(`\. Did you mean '[^']*'\?`)
+	// "the ${{ }} branch at stages.yml:12" / "at line 12": the branch's line
+	// moves with the edits around it.
+	msgBranch = regexp.MustCompile(`(branch at (?:line |\S+:))\d+`)
 )
 
 // problemKey identifies a problem without its position: the file it is in,
@@ -518,6 +521,7 @@ var (
 func problemKey(relPath, code, msg string) string {
 	msg = msgLocation.ReplaceAllString(msg, "$1: ")
 	msg = msgSuggest.ReplaceAllString(msg, "")
+	msg = msgBranch.ReplaceAllString(msg, "${1}N")
 	return relPath + "\x00" + code + "\x00" + msg
 }
 
